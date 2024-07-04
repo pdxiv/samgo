@@ -542,7 +542,6 @@ func samMain() bool {
 	if debug {
 		printPhonemes(phonemeindex, phonemeLength, stress)
 	}
-
 	prepareOutput()
 	return true
 }
@@ -614,6 +613,7 @@ func createFrames() {
 			amplitude3[x] = ampl3data[phoneme]                       // F3 amplitude
 			sampledConsonantFlag[x] = sampledConsonantFlags[phoneme] // phoneme data for sampled consonants
 			pitches[x] = pitch + phase1                              // pitch
+
 			x++
 			phase2--
 		}
@@ -729,8 +729,14 @@ func addInflection(inflection, pos byte) {
 		a += inflection
 		pitches[pos] = a
 
-		for pos != end && pitches[pos] == 255 {
+		for {
 			pos++
+			if pos == end {
+				break // Exit loop if we've reached the end
+			}
+			if pitches[pos] != 255 {
+				break // Exit loop if we've found a non-255 pitch
+			}
 		}
 	}
 }
@@ -811,15 +817,22 @@ func adjustLengths() {
 		if index == 255 { // END
 			break
 		}
+
+		// not punctuation?
 		if (flags[index] & FLAG_PUNCT) == 0 {
 			x++
 			continue
 		}
 		loopIndex := x
 
-		for x > 0 && ((flags[phonemeindex[x-1]] & FLAG_VOWEL) == 0) {
-			x--
+		// Back up to the first vowel
+		for x > 0 {
+			x-- // Decrement X
+			if flags[phonemeindex[x]]&FLAG_VOWEL != 0 {
+				break // Exit the loop if a vowel is found
+			}
 		}
+
 		if x == 0 {
 			break
 		}
@@ -965,6 +978,36 @@ func insert(position, mem60InputMatchPos, mem59, mem58Variant byte) {
 	stress[position] = mem58Variant
 }
 
+func interpolate(width, table, frame byte, mem53 int8) {
+	sign := mem53 < 0
+	remainder := byte(abs(int(mem53))) % width
+	div := uint8(int(mem53) / int(width))
+	error := byte(0)
+	pos := width
+	val := read(table, frame) + div
+
+	pos--
+	for pos > 0 {
+		error += remainder
+		if error >= width { // accumulated a whole integer error, so adjust output
+			error -= width
+			if sign {
+				val--
+			} else if val != 0 {
+				val++ // if input is 0, we always leave it alone
+			}
+		}
+		frame++
+		write(table, frame, val) // Write updated value back to next frame.
+		val += div
+		pos--
+	}
+}
+
+func trans(a, b byte) byte {
+	return byte(((uint16(a) * uint16(b)) >> 8) << 1)
+}
+
 func interpolatePitch(pos, mem49, phase3 byte) {
 	// half the width of the current and next phoneme
 	curWidth := phonemeLengthOutput[pos] / 2
@@ -973,34 +1016,7 @@ func interpolatePitch(pos, mem49, phase3 byte) {
 	// sum the values
 	width := curWidth + nextWidth
 	pitch := int8(pitches[nextWidth+mem49]) - int8(pitches[mem49-curWidth])
-
 	interpolate(width, 168, phase3, pitch)
-}
-
-func interpolate(width, table, frame byte, mem53 int8) {
-	sign := mem53 < 0
-	remainder := byte(abs(int(mem53))) % width
-	div := byte(mem53) / width
-
-	error := byte(0)
-	pos := width
-	val := read(table, frame) + div
-
-	for pos != 0 {
-		pos--
-		error += remainder
-		if error >= width {
-			error -= width
-			if sign {
-				val--
-			} else if val != 0 {
-				val++
-			}
-		}
-		write(table, frame+1, val)
-		frame++
-		val += div
-	}
 }
 
 func abs(x int) int {
@@ -1264,6 +1280,9 @@ func render() {
 	processFrames(t)
 }
 
+// RESCALE AMPLITUDE
+//
+// Rescale volume from a linear scale to decibels.
 func rescaleAmplitude() {
 	for i := 255; i >= 0; i-- {
 		amplitude1[i] = amplitudeRescale[amplitude1[i]]
@@ -1467,10 +1486,6 @@ func setSpeed(speedSource byte) {
 
 func setThroat(throat byte) {
 	setMouthThroat(128, throat)
-}
-
-func trans(a, b byte) byte {
-	return byte(((uint16(a) * uint16(b)) >> 8) << 1)
 }
 
 func write(p, y, value byte) {
