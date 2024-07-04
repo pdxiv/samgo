@@ -630,46 +630,68 @@ func code37055(npos, mask byte) bool {
 	}
 }
 
-func createTransitions() byte {
-	var mem49 byte = 0
-	pos := byte(0)
+func createTransitions() uint8 {
+	var mem49 uint8 = 0
+	var pos uint8 = 0
 
-	for phonemeIndexOutput[pos+1] != 255 { // 255 == end_token
+	for {
+		var next_rank uint8
+		var rank uint8
+		var speedcounter uint8
+		var phase1 uint8
+		var phase2 uint8
+		var phase3 uint8
+		var transition uint8
+
 		phoneme := phonemeIndexOutput[pos]
 		nextPhoneme := phonemeIndexOutput[pos+1]
 
-		// get the ranking of each phoneme
-		nextRank := blendRank[nextPhoneme]
-		rank := blendRank[phoneme]
+		if nextPhoneme == 255 {
+			break // 255 == end_token
+		}
 
-		var phase1, phase2 byte
+		// get the ranking of each phoneme
+		next_rank = blendRank[nextPhoneme]
+		rank = blendRank[phoneme]
 
 		// compare the rank - lower rank value is stronger
-		if rank == nextRank {
+		if rank == next_rank {
 			// same rank, so use out blend lengths from each phoneme
 			phase1 = outBlendLength[phoneme]
 			phase2 = outBlendLength[nextPhoneme]
-		} else if rank < nextRank {
-			// next phoneme is stronger, so use its blend lengths
+		} else if rank < next_rank {
+			// next phoneme is stronger, so us its blend lengths
 			phase1 = inBlendLength[nextPhoneme]
 			phase2 = outBlendLength[nextPhoneme]
 		} else {
 			// current phoneme is stronger, so use its blend lengths
+			// note the out/in are swapped
 			phase1 = outBlendLength[phoneme]
 			phase2 = inBlendLength[phoneme]
 		}
 
 		mem49 += phonemeLengthOutput[pos]
 
-		speedcounter := mem49 + phase2
-		phase3 := mem49 - phase1
-		transition := phase1 + phase2 // total transition?
+		speedcounter = mem49 + phase2
+		phase3 = mem49 - phase1
+		transition = phase1 + phase2 // total transition?
 
 		if ((transition - 2) & 128) == 0 {
+			table := uint8(169)
 			interpolatePitch(pos, mem49, phase3)
-			for table := byte(169); table < 175; table++ {
-				value := int8(read(table, speedcounter) - read(table, phase3))
+			for table < 175 {
+				// tables:
+				// 168  pitches[]
+				// 169  frequency1
+				// 170  frequency2
+				// 171  frequency3
+				// 172  amplitude1
+				// 173  amplitude2
+				// 174  amplitude3
+
+				value := int8(read(table, speedcounter)) - int8(read(table, phase3))
 				interpolate(transition, table, phase3, value)
+				table++
 			}
 		}
 		pos++
@@ -1261,7 +1283,7 @@ func processFrames(mem48 byte) {
 }
 
 func render() {
-	if phonemeindex[0] == 255 {
+	if phonemeIndexOutput[0] == 255 {
 		return // exit if no data
 	}
 
