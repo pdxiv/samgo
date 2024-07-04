@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -1314,7 +1315,6 @@ func rescaleAmplitude() {
 }
 
 func output(index int, A byte) {
-	var oldtimetableindex int
 	bufferpos += timetable[oldtimetableindex][index]
 	oldtimetableindex = index
 	// write a little bit in advance
@@ -1532,12 +1532,12 @@ func write(p, y, value byte) {
 }
 
 func writeWav(filename string, buffer []byte, bufferLength int) error {
-	file, err := fopenS(filename, "wb")
+	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+
 	if err != nil {
 		return fmt.Errorf("failed to open file: %v", err)
 	}
 	defer file.Close()
-
 	// RIFF header
 	if _, err := file.Write([]byte("RIFF")); err != nil {
 		return fmt.Errorf("failed to write RIFF header: %v", err)
@@ -1603,7 +1603,6 @@ func writeWav(filename string, buffer []byte, bufferLength int) error {
 	if _, err := file.Write(buffer); err != nil {
 		return fmt.Errorf("failed to write audio data: %v", err)
 	}
-
 	return nil
 }
 
@@ -1699,10 +1698,17 @@ func main() {
 		printUsage()
 		os.Exit(1)
 	}
+
+	var err error
+
 	if wavFilename != "" {
-		writeWav(wavFilename, getBuffer(), getBufferLength()/50)
+		err = writeWav(wavFilename, getBuffer(), getBufferLength()/50)
 	} else {
 		outputSound()
+	}
+
+	if err != nil {
+		log.Fatalf("Failed to open log file: %v", err)
 	}
 }
 

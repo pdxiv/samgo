@@ -29,6 +29,8 @@ var (
 
 	singmode bool = false
 	debug    bool = false
+
+	oldtimetableindex int = 0
 )
 
 var timetable = [5][5]int{
