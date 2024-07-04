@@ -1600,6 +1600,7 @@ func writeWav(filename string, buffer []byte, bufferLength int) error {
 		return fmt.Errorf("failed to write data length: %v", err)
 	}
 
+	buffer = buffer[:bufferLength] // Dirty workaround. Truncate the 10 second buffer
 	if _, err := file.Write(buffer); err != nil {
 		return fmt.Errorf("failed to write audio data: %v", err)
 	}
