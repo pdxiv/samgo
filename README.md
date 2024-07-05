@@ -8,4 +8,7 @@ It is based on the adaptation to C by [Stefan Macke](https://github.com/s-macke/
 
 ## Status
 
-The "English to ARPABET" translation works, but the rest is a work in progress.
+Everything seems to work except:
+
+* Audio output isn't enabled (writing to a WAV file works fine)
+* Debug text printing looks strange
