@@ -10,5 +10,5 @@ It is based on the adaptation to C by [Stefan Macke](https://github.com/s-macke/
 
 Everything seems to work except:
 
-* Audio output isn't enabled (writing to a WAV file works fine)
+* Direct audio output is a bit garbled (writing to a WAV file works fine)
 * Debug text printing looks strange
