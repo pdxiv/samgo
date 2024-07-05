@@ -1481,10 +1481,6 @@ func setMouthThroat(mouth, throat byte) {
 	}
 }
 
-func setMouth(mouth byte) {
-	setMouthThroat(mouth, 128)
-}
-
 func setPhonemeLength() {
 	position := byte(0)
 	for phonemeindex[position] != 255 {
@@ -1506,8 +1502,12 @@ func setSpeed(speedSource byte) {
 	speed = speedSource
 }
 
-func setThroat(throat byte) {
-	setMouthThroat(128, throat)
+func setThroat(_throat byte) {
+	throat = _throat
+}
+
+func setMouth(_mouth byte) {
+	mouth = _mouth
 }
 
 func write(p, y, value byte) {
