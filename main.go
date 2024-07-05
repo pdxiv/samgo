@@ -1,13 +1,66 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/ebitengine/oto/v3"
 )
+
+// Add these global variables for "oto"
+var (
+	otoCtx      *oto.Context
+	sampleRate  = 22050
+	numChannels = 1
+)
+
+func initAudio() error {
+	var err error
+	otoCtx, _, err = oto.NewContext(&oto.NewContextOptions{
+		SampleRate:   sampleRate,
+		ChannelCount: numChannels,
+		Format:       oto.FormatUnsignedInt8,
+	})
+	if err != nil {
+		return fmt.Errorf("oto.NewContext failed: %v", err)
+	}
+	return nil
+}
+
+func convertAudioFormat(input []byte) []byte {
+	output := make([]byte, len(input))
+	for i, sample := range input {
+		output[i] = sample ^ 0x80 // Convert unsigned 8-bit to signed 8-bit
+	}
+	return output
+}
+
+func playAudio(buffer []byte, bufferLength int) error {
+	if otoCtx == nil {
+		return fmt.Errorf("audio context not initialized")
+	}
+
+	// Convert audio format
+	convertedBuffer := convertAudioFormat(buffer[:bufferLength])
+
+	player := otoCtx.NewPlayer(bytes.NewReader(convertedBuffer))
+	defer player.Close()
+
+	player.Play()
+
+	// Wait for the audio to finish playing
+	for player.IsPlaying() {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	return nil
+}
 
 func textToPhonemes(input []byte) bool {
 	var mem56PhonemeOutpos byte // output position for phonemes
@@ -1109,11 +1162,6 @@ func printPhonemes(phonemeIndex, phonemeLength, stress []byte) {
 	fmt.Println()
 }
 
-func outputSound() {
-	// This function might need to be adapted based on your audio output method in Go
-	fmt.Println("Audio output not implemented")
-}
-
 func parser2() {
 	pos := byte(0)
 	for p := phonemeindex[pos]; p != 255; p = phonemeindex[pos] {
@@ -1608,6 +1656,11 @@ func writeWav(filename string, buffer []byte, bufferLength int) error {
 }
 
 func main() {
+
+	if err := initAudio(); err != nil {
+		log.Fatalf("Failed to initialize audio: %v", err)
+	}
+
 	var phonetic bool
 	var wavFilename string
 	input = make([]byte, 256)
@@ -1705,7 +1758,11 @@ func main() {
 	if wavFilename != "" {
 		err = writeWav(wavFilename, getBuffer(), getBufferLength()/50)
 	} else {
-		outputSound()
+		err = playAudio(getBuffer(), getBufferLength()/50)
+
+		if err != nil {
+			log.Fatalf("Failed to output audio: %v", err)
+		}
 	}
 
 	if err != nil {
@@ -1767,26 +1824,6 @@ func drulePre(descr string, x byte) {
 		fmt.Printf("phoneme %d (%c%c) length %d\n", x, signInputTable1[phonemeindex[x]],
 			signInputTable2[phonemeindex[x]], phonemeLength[x])
 	}
-}
-
-// Helper function to parse file mode
-func parseMode(mode string) int {
-	var flag int
-	switch mode {
-	case "r":
-		flag = os.O_RDONLY
-	case "w":
-		flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-	case "a":
-		flag = os.O_WRONLY | os.O_CREATE | os.O_APPEND
-	default:
-		flag = os.O_RDONLY
-	}
-	return flag
-}
-
-func fopenS(filename, mode string) (*os.File, error) {
-	return os.OpenFile(filename, parseMode(mode), 0666)
 }
 
 func match(str string, inputTemp []byte) bool {
