@@ -525,49 +525,105 @@ func handleCh2(ch byte, mem int, inputTemp []byte) int {
 	return 0
 }
 
+// The input[] buffer contains a string of phonemes and stress markers along
+// the lines of:
+//
+//     DHAX KAET IHZ AH5GLIY. <0x9B>
+//
+// The byte 0x9B marks the end of the buffer. Some phonemes are 2 bytes
+// long, such as "DH" and "AX". Others are 1 byte long, such as "T" and "Z".
+// There are also stress markers, such as "5" and ".".
+//
+// The first character of the phonemes are stored in the table
+// signInputTable1[]. The second character of the phonemes are stored in the
+// table signInputTable2[]. The stress characters are arranged in low to high
+// stress order in stressInputTable[].
+//
+// The following process is used to parse the input[] buffer:
+//
+// Repeat until the <0x9B> character is reached:
+//
+//        First, a search is made for a 2 character match for phonemes that do
+//        not end with the '*' (wildcard) character. On a match, the index of
+//        the phoneme is added to phonemeIndex[] and the buffer position is
+//        advanced 2 bytes.
+//
+//        If this fails, a search is made for a 1 character match against all
+//        phoneme names ending with a '*' (wildcard). If this succeeds, the
+//        phoneme is added to phonemeIndex[] and the buffer position is advanced
+//        1 byte.
+//
+//        If this fails, search for a 1 character match in the
+//        stressInputTable[]. If this succeeds, the stress value is placed in
+//        the last stress[] table at the same index of the last added phoneme,
+//        and the buffer position is advanced by 1 byte.
+//
+//        If this fails, return a 0.
+//
+// On success:
+//
+//    1. phonemeIndex[] will contain the index of all the phonemes.
+//    2. The last index in phonemeIndex[] will be 255.
+//    3. stress[] will contain the stress value for each phoneme
+
+// input[] holds the string of phonemes, each two bytes wide
+// signInputTable1[] holds the first character of each phoneme
+// signInputTable2[] holds te second character of each phoneme
+// phonemeIndex[] holds the indexes of the phonemes after parsing input[]
+//
+// The parser scans through the input[], finding the names of the phonemes
+// by searching signInputTable1[] and signInputTable2[]. On a match, it
+// copies the index of the phoneme into the phonemeIndexTable[].
+//
+// The character <0x9B> marks the end of text in input[]. When it is reached,
+// the index 255 is placed at the end of the phonemeIndexTable[], and the
+// function returns with a 1 indicating success.
+
 func parser1() bool {
 	var sign1 byte
 	position := byte(0)
 	srcpos := byte(0)
 
-	for i := 0; i < 256; i++ {
+	// Clear the stress table
+	for i := range stress[:256] {
 		stress[i] = 0
 	}
 
-	for input[srcpos] != 155 { // 155 (\233) is end of line marker
+	for {
 		sign1 = input[srcpos]
-		match := -1
-		sign2 := input[srcpos+1]
-		match = fullMatch(sign1, sign2)
-		if match != -1 {
+		if sign1 == 155 { // 155 (\233) is end of line marker
+			break
+		}
+
+		var match int
+		srcpos++
+		sign2 := input[srcpos]
+
+		if match = fullMatch(sign1, sign2); match != -1 {
 			// Matched both characters (no wildcards)
 			phonemeindex[position] = byte(match)
+			position++
 			srcpos++ // Skip the second character of the input as we've matched it
+		} else if match = wildMatch(sign1); match != -1 {
+			// Matched just the first character (with second character matching '*')
+			phonemeindex[position] = byte(match)
+			position++
 		} else {
-			match = wildMatch(sign1)
-			if match != -1 {
-				// Matched just the first character (with second character matching '*')
-				phonemeindex[position] = byte(match)
-			} else {
-				// Should be a stress character. Search through the
-				// stress table backwards.
-				match = 8 // End of stress table. FIXME: Don't hardcode.
-				for stressInputTable[match] != sign1 && match > 0 {
-					match--
-				}
-
-				if match == 0 {
-					return false // failure
-				}
-
-				stress[position-1] = byte(match) // Set stress for prior phoneme
+			// Should be a stress character. Search through the stress table backwards.
+			match = 8 // End of stress table. FIXME: Don't hardcode.
+			for sign1 != stressInputTable[match] && match > 0 {
+				match--
 			}
+
+			if match == 0 {
+				return false // failure
+			}
+
+			stress[position-1] = byte(match) // Set stress for prior phoneme
 		}
-		position++
-		srcpos++
 	}
 
-	phonemeindex[position] = 255 // Mark end of phoneme list
+	phonemeindex[position] = END
 	return true
 }
 
@@ -880,125 +936,153 @@ func copyStress() {
 	}
 }
 
-func drule(str string) {
+func DescribeRule(str string) {
 	if debug {
 		fmt.Printf("RULE: %s\n", str)
 	}
 }
 
 func adjustLengths() {
-	x := byte(0)
-	for {
-		index := phonemeindex[x]
-		if index == 255 { // END
-			break
-		}
+	// LENGTHEN VOWELS PRECEDING PUNCTUATION
+	{
+		X := byte(0)
+		var index byte
 
-		// not punctuation?
-		if (flags[index] & FLAG_PUNCT) == 0 {
-			x++
-			continue
-		}
-		loopIndex := x
+		for index = phonemeindex[X]; index != END; index = phonemeindex[X] {
+			var loopIndex byte
 
-		// Back up to the first vowel
-		for x > 0 {
-			x-- // Decrement X
-			if flags[phonemeindex[x]]&FLAG_VOWEL != 0 {
-				break // Exit the loop if a vowel is found
+			// not punctuation?
+			if (flags[index] & FLAG_PUNCT) == 0 {
+				X = X + 1
+				continue
 			}
-		}
 
-		if x == 0 {
-			break
-		}
+			loopIndex = X
 
-		for x != loopIndex {
-			index = phonemeindex[x]
-			if (flags[index]&FLAG_FRICATIVE) == 0 || (flags[index]&FLAG_VOICED) != 0 {
-				drulePre("Lengthen <FRICATIVE> or <VOICED> between <VOWEL> and <PUNCTUATION> by 1.5", x)
-				a := phonemeLength[x]
-				phonemeLength[x] = (a >> 1) + a + 1
-				drulePost(x)
+			// Back up to the first vowel
+			for X > 0 {
+				X = X - 1 // Decrement X
+				if (flags[phonemeindex[X]] & FLAG_VOWEL) != 0 {
+					break // Exit the loop if a vowel is found
+				}
 			}
-			x++
-		}
-		x++
+
+			if X == 0 {
+				break
+			}
+
+			for {
+				// test for vowel
+				index = phonemeindex[X]
+
+				// test for fricative/unvoiced or not voiced
+				if (flags[index]&FLAG_FRICATIVE) == 0 || (flags[index]&FLAG_VOICED) != 0 { // nochmal überprüfen
+					A := phonemeLength[X]
+					// change phoneme length to (length * 1.5) + 1
+					describeRulePre("Lengthen <FRICATIVE> or <VOICED> between <VOWEL> and <PUNCTUATION> by 1.5", X)
+					phonemeLength[X] = (A >> 1) + A + 1
+					describeRulePost(X)
+				}
+				X = X + 1
+				if X == loopIndex {
+					break
+				}
+			}
+			X = X + 1
+		} // for
 	}
 
+	// Similar to the above routine, but shorten vowels under some circumstances
+
+	// Loop through all phonemes
 	loopIndex := byte(0)
-	for {
-		index := phonemeindex[loopIndex]
-		if index == 255 { // END
-			break
-		}
+	var index byte
+
+	for index = phonemeindex[loopIndex]; index != END; index = phonemeindex[loopIndex] {
+		X := loopIndex
 
 		if (flags[index] & FLAG_VOWEL) != 0 {
-			x := loopIndex
 			index = phonemeindex[loopIndex+1]
 			if (flags[index] & FLAG_CONSONANT) == 0 {
 				if index == 18 || index == 19 { // 'RX', 'LX'
 					index = phonemeindex[loopIndex+2]
 					if (flags[index] & FLAG_CONSONANT) != 0 {
-						drulePre("<VOWEL> <RX | LX> <CONSONANT> - decrease length of vowel by 1", loopIndex)
-						phonemeLength[loopIndex]--
-						drulePost(loopIndex)
+						describeRulePre("<VOWEL> <RX | LX> <CONSONANT> - decrease length of vowel by 1\n", loopIndex)
+						phonemeLength[loopIndex] = phonemeLength[loopIndex] - 1
+						describeRulePost(loopIndex)
 					}
 				}
-			} else {
+			} else { // Got here if not <VOWEL>
 				var flag uint16
-				if index == 255 { // END
+				if index == END {
 					flag = 65
 				} else {
 					flag = flags[index]
 				}
 
-				if (flag & FLAG_VOICED) == 0 {
-					if (flag & FLAG_PLOSIVE) != 0 {
-						drulePre("<VOWEL> <UNVOICED PLOSIVE> - decrease vowel by 1/8th", loopIndex)
-						phonemeLength[loopIndex] -= (phonemeLength[loopIndex] >> 3)
-						drulePost(loopIndex)
+				if (flag & FLAG_VOICED) == 0 { // Unvoiced
+					// *, .*, ?*, ,*, -*, DX, S*, SH, F*, TH, /H, /X, CH, P*, T*, K*, KX
+					if (flag & FLAG_PLOSIVE) != 0 { // unvoiced plosive
+						// RULE: <VOWEL> <UNVOICED PLOSIVE>
+						// <VOWEL> <P*, T*, K*, KX>
+						describeRulePre("<VOWEL> <UNVOICED PLOSIVE> - decrease vowel by 1/8th", loopIndex)
+						phonemeLength[loopIndex] = phonemeLength[loopIndex] - (phonemeLength[loopIndex] >> 3)
+						describeRulePost(loopIndex)
 					}
 				} else {
-					drulePre("<VOWEL> <VOICED CONSONANT> - increase vowel by 1/2 + 1", x)
-					a := phonemeLength[loopIndex]
-					phonemeLength[loopIndex] = (a >> 2) + a + 1 // 5/4*A + 1
-					drulePost(loopIndex)
+					describeRulePre("<VOWEL> <VOICED CONSONANT> - increase vowel by 1/2 + 1\n", X-1)
+					// decrease length
+					A := phonemeLength[loopIndex]
+					phonemeLength[loopIndex] = (A >> 2) + A + 1 // 5/4*A + 1
+					describeRulePost(loopIndex)
 				}
 			}
-		} else if (flags[index] & FLAG_NASAL) != 0 {
-			x := loopIndex + 1
-			index = phonemeindex[x]
-			if index != 255 && (flags[index]&FLAG_STOPCONS) != 0 {
-				drulePre("<NASAL> <STOP CONSONANT> - set nasal = 5, consonant = 6", x)
-				phonemeLength[x] = 6
-				phonemeLength[x-1] = 5
-				drulePost(x)
+		} else if (flags[index] & FLAG_NASAL) != 0 { // nasal?
+			// RULE: <NASAL> <STOP CONSONANT>
+			//       Set punctuation length to 6
+			//       Set stop consonant length to 5
+			X = X + 1
+			index = phonemeindex[X]
+			if index != END && (flags[index]&FLAG_STOPCONS) != 0 {
+				DescribeRule("<NASAL> <STOP CONSONANT> - set nasal = 5, consonant = 6")
+				phonemeLength[X] = 6   // set stop consonant length to 6
+				phonemeLength[X-1] = 5 // set nasal length to 5
 			}
-		} else if (flags[index] & FLAG_STOPCONS) != 0 {
-			x := loopIndex + 1
-			for phonemeindex[x] == 0 {
-				x++
+		} else if (flags[index] & FLAG_STOPCONS) != 0 { // (voiced) stop consonant?
+			// RULE: <VOICED STOP CONSONANT> {optional silence} <STOP CONSONANT>
+			//       Shorten both to (length/2 + 1)
+
+			// move past silence
+			X = X + 1
+			for phonemeindex[X] == 0 {
+				X = X + 1
+			}
+			index = phonemeindex[X]
+
+			if index != END && (flags[index]&FLAG_STOPCONS) != 0 {
+				// FIXME, this looks wrong?
+				// RULE: <UNVOICED STOP CONSONANT> {optional silence} <STOP CONSONANT>
+				DescribeRule("<UNVOICED STOP CONSONANT> {optional silence} <STOP CONSONANT> - shorten both to 1/2 + 1")
+				phonemeLength[X] = (phonemeLength[X] >> 1) + 1
+				phonemeLength[loopIndex] = (phonemeLength[loopIndex] >> 1) + 1
+				X = loopIndex
+			}
+		} else if (flags[index] & FLAG_LIQUIC) != 0 { // liquic consonant?
+			// RULE: <VOICED NON-VOWEL> <DIPTHONG>
+			//       Decrease <DIPTHONG> by 2
+			index = phonemeindex[X-1] // prior phoneme;
+
+			// FIXME: The debug code here breaks the rule.
+			// prior phoneme a stop consonant>
+			if (flags[index] & FLAG_STOPCONS) != 0 {
+				describeRulePre("<LIQUID CONSONANT> <DIPTHONG> - decrease by 2", X)
 			}
 
-			index = phonemeindex[x]
-			if index != 255 && (flags[index]&FLAG_STOPCONS) != 0 {
-				drulePre("<STOP CONSONANT> {optional silence} <STOP CONSONANT> - shorten both to 1/2 + 1", x)
-				phonemeLength[x] = (phonemeLength[x] >> 1) + 1
-				phonemeLength[loopIndex] = (phonemeLength[loopIndex] >> 1) + 1
-				drulePost(x)
-				x = loopIndex
-			}
-		} else if (flags[index] & FLAG_LIQUIC) != 0 {
-			index = phonemeindex[loopIndex-1]
-			if (flags[index] & FLAG_STOPCONS) != 0 {
-				drulePre("<LIQUID CONSONANT> <DIPTHONG> - decrease by 2", loopIndex)
-				phonemeLength[loopIndex] -= 2
-				drulePost(loopIndex)
-			}
+			phonemeLength[X] = phonemeLength[X] - 2 // 20ms
+			describeRulePost(X)
 		}
 
-		loopIndex++
+		loopIndex = loopIndex + 1
 	}
 }
 
@@ -1163,22 +1247,31 @@ func printPhonemes(phonemeIndex, phonemeLength, stress []byte) {
 }
 
 func parser2() {
-	pos := byte(0)
-	for p := phonemeindex[pos]; p != 255; p = phonemeindex[pos] {
+	pos := byte(0) // mem66_openBrace
+	var p byte
+
+	if debug {
+		fmt.Println("Parser2")
+	}
+
+	for p = phonemeindex[pos]; p != END; p = phonemeindex[pos] {
+		var pf uint16
+		var prior byte
+
 		if debug {
 			fmt.Printf("%d: %c%c\n", pos, signInputTable1[p], signInputTable2[p])
 		}
 
-		if p == 0 {
-			pos++
+		if p == 0 { // Is phoneme pause?
+			pos = pos + 1
 			continue
 		}
 
-		pf := flags[p]
-		prior := phonemeindex[pos-1]
+		pf = flags[p]
+		prior = phonemeindex[pos-1]
 
 		if (pf & FLAG_DIPTHONG) != 0 {
-			ruleDipthong(p, byte(pf), pos)
+			ruleDipthong(p, pf, pos)
 		} else if p == 78 {
 			changeRule(pos, 24, "UL -> AX L") // Example: MEDDLE
 		} else if p == 79 {
@@ -1186,19 +1279,21 @@ func parser2() {
 		} else if p == 80 {
 			changeRule(pos, 28, "UN -> AX N") // Example: FUNCTION
 		} else if (pf&FLAG_VOWEL) != 0 && stress[pos] != 0 {
-			// RULE: <STRESSED VOWEL> <SILENCE> <STRESSED VOWEL> -> <STRESSED VOWEL> <SILENCE> Q <VOWEL>
+			// RULE:
+			//       <STRESSED VOWEL> <SILENCE> <STRESSED VOWEL> -> <STRESSED VOWEL>
+			//       <SILENCE> Q <VOWEL>
 			// EXAMPLE: AWAY EIGHT
 			if phonemeindex[pos+1] == 0 { // If following phoneme is a pause, get next
-				p2 := phonemeindex[pos+2]
-				if p2 != 255 && (flags[p2]&FLAG_VOWEL) != 0 && stress[pos+2] != 0 {
-					drule("Insert glottal stop between two stressed vowels with space between them")
+				p = phonemeindex[pos+2]
+				if p != END && (flags[p]&FLAG_VOWEL) != 0 && stress[pos+2] != 0 {
+					DescribeRule("Insert glottal stop between two stressed vowels with space between them")
 					insert(pos+2, 31, 0, 0) // 31 = 'Q'
 				}
 			}
-		} else if p == 23 { // 'R'
-			if prior == 69 { // 'T'
+		} else if p == pR { // RULES FOR PHONEMES BEFORE R
+			if prior == pT {
 				change(pos-1, 42, "T R -> CH R") // Example: TRACK
-			} else if prior == 57 { // 'D'
+			} else if prior == pD {
 				change(pos-1, 44, "D R -> J R") // Example: DRY
 			} else if (flags[prior] & FLAG_VOWEL) != 0 {
 				change(pos, 18, "<VOWEL> R -> <VOWEL> RX") // Example: ART
@@ -1206,14 +1301,23 @@ func parser2() {
 		} else if p == 24 && (flags[prior]&FLAG_VOWEL) != 0 {
 			change(pos, 19, "<VOWEL> L -> <VOWEL> LX") // Example: ALL
 		} else if prior == 60 && p == 32 { // 'G' 'S'
+			// Can't get to fire -
+			//       1. The G -> GX rule intervenes
+			//       2. Reciter already replaces GS -> GZ
 			change(pos, 38, "G S -> G Z")
-		} else if p == 60 { // 'G'
+		} else if p == 60 {
 			ruleG(pos)
 		} else {
 			if p == 72 { // 'K'
-				y := phonemeindex[pos+1]
-				if y == 255 || (flags[y]&FLAG_DIP_YX) == 0 {
-					change(pos, 75, "K <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> KX <VOWEL OR DIPTHONG NOT ENDING WITH IY>")
+				// K <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> KX <VOWEL OR DIPTHONG NOT
+				// ENDING WITH IY> Example: COW
+				Y := phonemeindex[pos+1]
+				// If at end, replace current phoneme with KX
+				if (flags[Y]&FLAG_DIP_YX) == 0 ||
+					Y == END { // VOWELS AND DIPTHONGS ENDING WITH IY SOUND flag set?
+					change(pos, 75,
+						"K <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> KX <VOWEL OR "+
+							"DIPTHONG NOT ENDING WITH IY>")
 					p = 75
 					pf = flags[p]
 				}
@@ -1221,13 +1325,17 @@ func parser2() {
 
 			// Replace with softer version?
 			if (flags[p]&FLAG_PLOSIVE) != 0 && prior == 32 { // 'S'
-				// RULE: S P -> S B
-				//       S T -> S D
-				//       S K -> S G
-				//       S KX -> S GX
+				// RULE:
+				//      S P -> S B
+				//      S T -> S D
+				//      S K -> S G
+				//      S KX -> S GX
 				// Examples: SPY, STY, SKY, SCOWL
+
 				if debug {
-					fmt.Printf("RULE: S* %c%c -> S* %c%c\n", signInputTable1[p], signInputTable2[p], signInputTable1[p-12], signInputTable2[p-12])
+					fmt.Printf("RULE: S* %c%c -> S* %c%c\n", signInputTable1[p],
+						signInputTable2[p], signInputTable1[p-12],
+						signInputTable2[p-12])
 				}
 				phonemeindex[pos] = p - 12
 			} else if (pf & FLAG_PLOSIVE) == 0 {
@@ -1253,13 +1361,14 @@ func parser2() {
 						p = phonemeindex[pos+2]
 					}
 					if (flags[p]&FLAG_VOWEL) != 0 && stress[pos+1] == 0 {
-						change(pos, 30, "Soften T or D following vowel or ER and preceding a pause -> DX")
+						change(pos, 30,
+							"Soften T or D following vowel or ER and preceding a pause -> DX")
 					}
 				}
 			}
 		}
-		pos++
-	}
+		pos = pos + 1
+	} // for
 }
 
 func processFrames(mem48 byte) {
@@ -1417,17 +1526,17 @@ func printUsage() {
 func ruleAlveolarUw(x byte) {
 	// ALVEOLAR flag set?
 	if (flags[phonemeindex[x-1]] & FLAG_ALVEOLAR) != 0 {
-		drule("<ALVEOLAR> UW -> <ALVEOLAR> UX")
+		DescribeRule("<ALVEOLAR> UW -> <ALVEOLAR> UX")
 		phonemeindex[x] = 16
 	}
 }
 
 func ruleCh(x byte) {
-	drule("CH -> CH CH+1")
+	DescribeRule("CH -> CH CH+1")
 	insert(x+1, 43, 0, stress[x])
 }
 
-func ruleDipthong(p, pf byte, pos byte) {
+func ruleDipthong(p byte, pf uint16, pos byte) {
 	// <DIPTHONG ENDING WITH WX> -> <DIPTHONG ENDING WITH WX> WX
 	// <DIPTHONG NOT ENDING WITH WX> -> <DIPTHONG NOT ENDING WITH WX> YX
 	// Example: OIL, COW
@@ -1441,9 +1550,9 @@ func ruleDipthong(p, pf byte, pos byte) {
 	}
 	// Insert at WX or YX following, copying the stress
 	if a == 20 {
-		drule("insert WX following dipthong NOT ending in IY sound")
+		DescribeRule("insert WX following dipthong NOT ending in IY sound")
 	} else if a == 21 {
-		drule("insert YX following dipthong ending in IY sound")
+		DescribeRule("insert YX following dipthong ending in IY sound")
 	}
 	insert(pos+1, a, 0, stress[pos])
 
@@ -1465,13 +1574,13 @@ func ruleG(pos byte) {
 	// If dipthong ending with YX, move continue processing next phoneme
 	if index != 255 && ((flags[index] & FLAG_DIP_YX) == 0) {
 		// replace G with GX and continue processing next phoneme
-		drule("G <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> GX <VOWEL OR DIPTHONG NOT ENDING WITH IY>")
+		DescribeRule("G <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> GX <VOWEL OR DIPTHONG NOT ENDING WITH IY>")
 		phonemeindex[pos] = 63 // 'GX'
 	}
 }
 
 func ruleJ(x byte) {
-	drule("J -> J J+1")
+	DescribeRule("J -> J J+1")
 	insert(x+1, 45, 0, stress[x])
 }
 
@@ -1673,7 +1782,7 @@ func main() {
 	i := 1
 	for i < len(os.Args) {
 		if os.Args[i][0] != '-' {
-			strcatS(input, 256, strings.ToUpper(os.Args[i]+" "))
+			stringConcatenateSafe(input, 256, strings.ToUpper(os.Args[i]+" "))
 		} else {
 			switch os.Args[i][1:] {
 			case "wav":
@@ -1729,22 +1838,22 @@ func main() {
 
 	if debug {
 		if phonetic {
-			fmt.Printf("phonetic input: %s\n", string(input))
+			fmt.Printf("phonetic input: %s\n", nullTerminatedBytesToString(input))
 		} else {
-			fmt.Printf("text input: %s\n", string(input))
+			fmt.Printf("text input: %s\n", nullTerminatedBytesToString(input))
 		}
 	}
 
 	if !phonetic {
-		strcatS(input, 256, "[")
+		stringConcatenateSafe(input, 256, "[")
 		if !textToPhonemes(input) {
 			os.Exit(1)
 		}
 		if debug {
-			fmt.Printf("phonetic input: %s\n", string(input))
+			fmt.Printf("phonetic input: %s\n", nullTerminatedBytesToString(input))
 		}
 	} else {
-		strcatS(input, 256, "\x9b")
+		stringConcatenateSafe(input, 256, "\x9b")
 	}
 
 	setInput(input)
@@ -1770,11 +1879,23 @@ func main() {
 	}
 }
 
+func nullTerminatedBytesToString(b []byte) string {
+	for i, v := range b {
+		if v == 0 {
+			return string(b[:i])
+		}
+	}
+	return string(b)
+}
+
 func getBuffer() []byte {
 	return buffer
 }
 
-func strcatS(dest []byte, size int, str string) {
+// Concatenate a source string to a destination string/buffer while preventing
+// buffer overflows by ensuring the total length does not exceed a specified
+// buffer size.
+func stringConcatenateSafe(dest []byte, size int, str string) {
 	destLen := len(strings.TrimRight(string(dest), "\x00"))
 	if destLen >= size-1 {
 		return
@@ -1809,7 +1930,7 @@ func initThings() {
 	// ML : changed from 32 to 255 to stop freezing with long inputs
 }
 
-func drulePost(x byte) {
+func describeRulePost(x byte) {
 	if debug {
 		fmt.Println("POST")
 		fmt.Printf("phoneme %d (%c%c) length %d\n", x, signInputTable1[phonemeindex[x]],
@@ -1817,12 +1938,17 @@ func drulePost(x byte) {
 	}
 }
 
-func drulePre(descr string, x byte) {
-	drule(descr)
+func describeRulePre(descr string, x byte) {
+	DescribeRule(descr)
 	if debug {
 		fmt.Println("PRE")
-		fmt.Printf("phoneme %d (%c%c) length %d\n", x, signInputTable1[phonemeindex[x]],
-			signInputTable2[phonemeindex[x]], phonemeLength[x])
+		fmt.Printf(
+			"phoneme %d (%c%c) length %d\n",
+			x,
+			signInputTable1[phonemeindex[x]],
+			signInputTable2[phonemeindex[x]],
+			phonemeLength[x],
+		)
 	}
 }
 
