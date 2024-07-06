@@ -814,7 +814,9 @@ var rectangle = []byte{
 	0x70, 0x70, 0x70, 0x70, 0x70, 0x70, 0x70, 0x70,
 }
 
-// 16x16 multiplication table
+// 16x16 multiplication table.
+// The X axis (nybble 1) represents a positive number between 0 and 7.5.
+// The Y axis (nybble 2) represents a signed integer between 0 to 7, and -8 to -1.
 var multtable = []byte{
 	// 0,  0.5,  1.0,  1.5,  2.0,  2.5,  3.0,  3.5,  4.0,  4.5,  5.0,  5.5,  6.0,  6.5   7.0,  7.5
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
