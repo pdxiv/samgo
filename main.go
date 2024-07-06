@@ -632,7 +632,6 @@ func samMain(samState *SamState) bool {
 	samConfig := &samState.Config
 	phonemeState := &samState.Phonemes
 	inputState := &samState.Input
-	initThings(samState)
 
 	if !parser1(phonemeState, inputState) {
 		return false
@@ -1783,12 +1782,8 @@ func main() {
 	audioState := &samState.Audio
 	inputState := &samState.Input
 	samConfig := &samState.Config
+	initThings(&samState)
 
-	/*
-		if err := initAudio(audioState); err != nil {
-			log.Fatalf("Failed to initialize audio: %v", err)
-		}
-	*/
 	var phonetic bool
 	var wavFilename string
 
