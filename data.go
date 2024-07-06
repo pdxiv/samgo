@@ -1,36 +1,63 @@
 package main
 
-var (
-	stressOutput         = make([]byte, 256)
-	phonemeIndexOutput   = make([]byte, 60) // tab47296
-	phonemeLengthOutput  = make([]byte, 60) // tab47416
-	pitches              = make([]byte, 256)
-	sampledConsonantFlag = make([]byte, 256) // tab44800
-	frequency1           = make([]byte, 256)
-	frequency2           = make([]byte, 256)
-	frequency3           = make([]byte, 256)
-	amplitude1           = make([]byte, 256)
-	amplitude2           = make([]byte, 256)
-	amplitude3           = make([]byte, 256)
-	input                = make([]byte, 256) // tab39445
-	phonemeLength        = make([]byte, 256) // tab40160
-	stress               = make([]byte, 256) // numbers from 0 to 8
-	phonemeindex         = make([]byte, 256)
-	inputTemp            = make([]byte, 256) // secure copy of input tab36096
+import "github.com/ebitengine/oto/v3"
 
-	speed  byte = 72
-	pitch  byte = 64
-	mouth  byte = 128
-	throat byte = 128
+type SamConfig struct {
+	Speed    byte
+	Pitch    byte
+	Mouth    byte
+	Throat   byte
+	SingMode bool
+	Debug    bool
+}
 
-	bufferpos int = 0
-	buffer    []byte
-	x         byte
+type AudioState struct {
+	OtoCtx            *oto.Context
+	SampleRate        int
+	NumChannels       int
+	Buffer            []byte
+	BufferPos         int
+	OldTimeTableIndex int
+}
 
-	singmode bool = false
-	debug    bool = false
+type PhonemeState struct {
+	PhonemeIndex        []byte // Initialized to 256 values in original implementation
+	PhonemeLength       []byte // Initialized to 256 values in original implementation
+	Stress              []byte // Initialized to 256 values in original implementation
+	PhonemeIndexOutput  []byte // Initialized to 60 values in original implementation
+	StressOutput        []byte // Initialized to 60 values in original implementation
+	PhonemeLengthOutput []byte // Initialized to 60 values in original implementation
+}
 
-	oldtimetableindex int = 0
+type SpeechData struct {
+	Frequency1           []byte // Initialized to 256 values in original implementation
+	Frequency2           []byte // Initialized to 256 values in original implementation
+	Frequency3           []byte // Initialized to 256 values in original implementation
+	Amplitude1           []byte // Initialized to 256 values in original implementation
+	Amplitude2           []byte // Initialized to 256 values in original implementation
+	Amplitude3           []byte // Initialized to 256 values in original implementation
+	SampledConsonantFlag []byte // Initialized to 256 values in original implementation
+	Pitches              []byte // Initialized to 256 values in original implementation
+}
+
+type InputState struct {
+	Input     []byte
+	InputTemp []byte // Initialized to 256 values in original implementation
+}
+
+type SamState struct {
+	Config    SamConfig
+	Audio     AudioState
+	Phonemes  PhonemeState
+	Speech    SpeechData
+	Input     InputState
+	X         byte
+	TimeTable [5][5]int
+}
+
+const (
+	SampleRate     = 22050
+	SampleChannels = 1
 )
 
 var timetable = [5][5]int{

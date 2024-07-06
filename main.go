@@ -13,18 +13,15 @@ import (
 	"github.com/ebitengine/oto/v3"
 )
 
-// Add these global variables for "oto"
-var (
-	otoCtx      *oto.Context
-	sampleRate  = 22050
-	numChannels = 1
-)
+func initAudio(audioState *AudioState) error {
+	audioState.SampleRate = SampleRate
+	audioState.NumChannels = SampleChannels
 
-func initAudio() error {
 	var err error
-	otoCtx, _, err = oto.NewContext(&oto.NewContextOptions{
-		SampleRate:   sampleRate,
-		ChannelCount: numChannels,
+
+	audioState.OtoCtx, _, err = oto.NewContext(&oto.NewContextOptions{
+		SampleRate:   audioState.SampleRate,
+		ChannelCount: audioState.NumChannels,
 		Format:       oto.FormatUnsignedInt8,
 	})
 	if err != nil {
@@ -41,15 +38,15 @@ func convertAudioFormat(input []byte) []byte {
 	return output
 }
 
-func playAudio(buffer []byte, bufferLength int) error {
-	if otoCtx == nil {
+func playAudio(audioState *AudioState, buffer []byte, bufferLength int) error {
+	if audioState.OtoCtx == nil {
 		return fmt.Errorf("audio context not initialized")
 	}
 
 	// Convert audio format
 	convertedBuffer := convertAudioFormat(buffer[:bufferLength])
 
-	player := otoCtx.NewPlayer(bytes.NewReader(convertedBuffer))
+	player := audioState.OtoCtx.NewPlayer(bytes.NewReader(convertedBuffer))
 	defer player.Close()
 
 	player.Play()
@@ -62,7 +59,10 @@ func playAudio(buffer []byte, bufferLength int) error {
 	return nil
 }
 
-func textToPhonemes(input []byte) bool {
+func textToPhonemes(samState *SamState, input []byte) bool {
+	inputState := &samState.Input
+	samConfig := &samState.Config
+
 	var mem56PhonemeOutpos byte // output position for phonemes
 	var mem57CurrentFlags byte
 	inputTempIndex := byte(0)
@@ -77,46 +77,47 @@ func textToPhonemes(input []byte) bool {
 	var r int
 	processRuleFlag := false
 
-	inputTemp[0] = ' '
+	inputState.InputTemp = make([]byte, 256)
+	inputState.InputTemp[0] = ' '
 
 	// secure copy of input because input will be overwritten by phonemes
-	x = byte(0)
-	for x < 255 {
-		a := input[x] & 127
+	samState.X = byte(0)
+	for samState.X < 255 {
+		a := input[samState.X] & 127
 		if a >= 112 {
 			a &= 95
 		} else if a >= 96 {
 			a &= 79
 		}
-		x++
-		inputTemp[x] = a
+		samState.X++
+		inputState.InputTemp[samState.X] = a
 	}
-	inputTemp[255] = 27
+	inputState.InputTemp[255] = 27
 	mem56PhonemeOutpos, mem61InputPos = 255, 255
 
 	for {
 		for {
 			for {
 				mem61InputPos++
-				x = mem61InputPos
-				mem64EqualSignInRule = inputTemp[x]
+				samState.X = mem61InputPos
+				mem64EqualSignInRule = inputState.InputTemp[samState.X]
 				if mem64EqualSignInRule == '[' {
 					mem56PhonemeOutpos++
-					x = mem56PhonemeOutpos
-					input[x] = 155
+					samState.X = mem56PhonemeOutpos
+					input[samState.X] = 155
 					return true
 				}
 
 				if mem64EqualSignInRule != '.' {
 					break
 				}
-				x++
-				if (tab36376[inputTemp[x]] & 1) != 0 {
+				samState.X++
+				if (tab36376[inputState.InputTemp[samState.X]] & 1) != 0 {
 					break
 				}
 				mem56PhonemeOutpos++
-				x = mem56PhonemeOutpos
-				input[x] = '.'
+				samState.X = mem56PhonemeOutpos
+				input[samState.X] = '.'
 			}
 			mem57CurrentFlags = tab36376[mem64EqualSignInRule]
 			if (mem57CurrentFlags & 2) != 0 {
@@ -127,14 +128,14 @@ func textToPhonemes(input []byte) bool {
 			if mem57CurrentFlags != 0 {
 				break
 			}
-			inputTemp[x] = ' '
+			inputState.InputTemp[samState.X] = ' '
 			mem56PhonemeOutpos++
-			x = mem56PhonemeOutpos
-			if x > 120 {
-				input[x] = 155
+			samState.X = mem56PhonemeOutpos
+			if samState.X > 120 {
+				input[samState.X] = 155
 				return true
 			}
-			input[x] = 32
+			input[samState.X] = 32
 		}
 
 		if (mem57CurrentFlags & 2) == 0 {
@@ -143,8 +144,8 @@ func textToPhonemes(input []byte) bool {
 			}
 
 			// go to the right rules for this character.
-			x = mem64EqualSignInRule - 'A'
-			mem62 = uint16(tab37489[x]) | (uint16(tab37515[x]) << 8)
+			samState.X = mem64EqualSignInRule - 'A'
+			mem62 = uint16(tab37489[samState.X]) | (uint16(tab37515[samState.X]) << 8)
 		}
 
 		for {
@@ -175,13 +176,13 @@ func textToPhonemes(input []byte) bool {
 			}
 			mem64EqualSignInRule = y // Store the position of '='
 			mem60InputMatchPos = mem61InputPos
-			x = mem60InputMatchPos
+			samState.X = mem60InputMatchPos
 			// compare the string within the bracket
 			y = mem66OpenBrace + 1
 
 			matchFailed := false
 			for {
-				if getRuleByte(mem62, y) != inputTemp[x] {
+				if getRuleByte(mem62, y) != inputState.InputTemp[samState.X] {
 					matchFailed = true
 					break
 				}
@@ -189,8 +190,8 @@ func textToPhonemes(input []byte) bool {
 				if y == mem65ClosingBrace {
 					break
 				}
-				x++
-				mem60InputMatchPos = x
+				samState.X++
+				mem60InputMatchPos = samState.X
 			}
 
 			if matchFailed {
@@ -210,11 +211,11 @@ func textToPhonemes(input []byte) bool {
 						processRuleFlag = true
 						break
 					}
-					x = mem57CurrentFlags & 127
-					if (tab36376[x] & 128) == 0 {
+					samState.X = mem57CurrentFlags & 127
+					if (tab36376[samState.X] & 128) == 0 {
 						break
 					}
-					if inputTemp[mem59-1] != mem57CurrentFlags {
+					if inputState.InputTemp[mem59-1] != mem57CurrentFlags {
 						matchFailed = true
 						break
 					}
@@ -227,24 +228,24 @@ func textToPhonemes(input []byte) bool {
 
 					ch := mem57CurrentFlags
 
-					r = handleCh2(ch, int(mem59-1), inputTemp)
+					r = handleCh2(samState, ch, int(mem59-1), inputState.InputTemp)
 					if r == -1 {
 						switch ch {
 						case '&':
-							if !code37055(mem59-1, 16) {
-								if inputTemp[x] != 'H' {
+							if !code37055(samState, mem59-1, 16) {
+								if inputState.InputTemp[samState.X] != 'H' {
 									r = 1
 								} else {
-									x--
-									a := inputTemp[x]
+									samState.X--
+									a := inputState.InputTemp[samState.X]
 									if (a != 'C') && (a != 'S') {
 										r = 1
 									}
 								}
 							}
 						case '@':
-							if !code37055(mem59-1, 4) {
-								a := inputTemp[x]
+							if !code37055(samState, mem59-1, 4) {
+								a := inputState.InputTemp[samState.X]
 								if a != 'H' {
 									r = 1
 								}
@@ -253,14 +254,14 @@ func textToPhonemes(input []byte) bool {
 								}
 							}
 						case '+':
-							x = mem59
-							x--
-							a := inputTemp[x]
+							samState.X = mem59
+							samState.X--
+							a := inputState.InputTemp[samState.X]
 							if (a != 'E') && (a != 'I') && (a != 'Y') {
 								r = 1
 							}
 						case ':':
-							for code37055(mem59-1, 32) {
+							for code37055(samState, mem59-1, 32) {
 								mem59--
 							}
 							continue
@@ -274,7 +275,7 @@ func textToPhonemes(input []byte) bool {
 						break
 					}
 
-					mem59 = x
+					mem59 = samState.X
 				} else {
 					break
 				}
@@ -285,28 +286,28 @@ func textToPhonemes(input []byte) bool {
 			}
 			for {
 				if !processRuleFlag {
-					x = inputTempIndex + 1
-					if inputTemp[x] == 'E' {
-						if (tab36376[inputTemp[x+1]] & 128) != 0 {
-							x++
-							a := inputTemp[x]
+					samState.X = inputTempIndex + 1
+					if inputState.InputTemp[samState.X] == 'E' {
+						if (tab36376[inputState.InputTemp[samState.X+1]] & 128) != 0 {
+							samState.X++
+							a := inputState.InputTemp[samState.X]
 							if a == 'L' {
-								x++
-								if inputTemp[x] != 'Y' {
+								samState.X++
+								if inputState.InputTemp[samState.X] != 'Y' {
 									matchFailed = true
 									break
 								}
-							} else if (a != 'R') && (a != 'S') && (a != 'D') && !match("FUL", inputTemp[x:]) {
+							} else if (a != 'R') && (a != 'S') && (a != 'D') && !match("FUL", inputState.InputTemp[samState.X:]) {
 								matchFailed = true
 								break
 							}
 						}
 					} else {
-						if !match("ING", inputTemp[x:]) {
+						if !match("ING", inputState.InputTemp[samState.X:]) {
 							matchFailed = true
 							break
 						}
-						inputTempIndex = x
+						inputTempIndex = samState.X
 					}
 				}
 				processRuleFlag = false
@@ -318,7 +319,7 @@ func textToPhonemes(input []byte) bool {
 						if y == mem64EqualSignInRule {
 							mem61InputPos = mem60InputMatchPos
 
-							if debug {
+							if samConfig.Debug {
 								printRule(mem62)
 							}
 
@@ -341,7 +342,7 @@ func textToPhonemes(input []byte) bool {
 						if (tab36376[mem57CurrentFlags] & 128) == 0 {
 							break
 						}
-						if inputTemp[inputTempIndex+1] != mem57CurrentFlags {
+						if inputState.InputTemp[inputTempIndex+1] != mem57CurrentFlags {
 							r = 1
 							break
 						}
@@ -351,8 +352,8 @@ func textToPhonemes(input []byte) bool {
 					if r == 0 {
 						a := mem57CurrentFlags
 						if a == '@' {
-							if !code37055(inputTempIndex+1, 4) {
-								a = inputTemp[x]
+							if !code37055(samState, inputTempIndex+1, 4) {
+								a = inputState.InputTemp[samState.X]
 								if (a != 'R') && (a != 'T') && (a != 'C') && (a != 'S') {
 									r = 1
 								}
@@ -360,12 +361,12 @@ func textToPhonemes(input []byte) bool {
 								r = -2
 							}
 						} else if a == ':' {
-							for code37055(inputTempIndex+1, 32) {
-								inputTempIndex = x
+							for code37055(samState, inputTempIndex+1, 32) {
+								inputTempIndex = samState.X
 							}
 							r = -2
 						} else {
-							r = handleCh(a, inputTempIndex+1)
+							r = handleCh(samState, a, inputTempIndex+1)
 						}
 					}
 
@@ -378,7 +379,7 @@ func textToPhonemes(input []byte) bool {
 						continue
 					}
 					if r == 0 {
-						inputTempIndex = x
+						inputTempIndex = samState.X
 					}
 
 					if r != 0 || y == mem64EqualSignInRule {
@@ -408,16 +409,16 @@ func textToPhonemes(input []byte) bool {
 	}
 }
 
-func renderVoicedSample(hi uint16, off uint8, phase1 uint8) uint8 {
+func renderVoicedSample(audioState *AudioState, hi uint16, off uint8, phase1 uint8) uint8 {
 	for {
 		bit := uint8(8)
 		sample := sampleTable[hi+uint16(off)]
 
 		for bit != 0 {
 			if (sample & 128) != 0 {
-				output(3, 26)
+				output(audioState, 3, 26)
 			} else {
-				output(4, 6)
+				output(audioState, 4, 6)
 			}
 			sample <<= 1
 			bit--
@@ -433,11 +434,11 @@ func renderVoicedSample(hi uint16, off uint8, phase1 uint8) uint8 {
 	return off
 }
 
-func combineGlottalAndFormants(phase1, phase2, phase3, Y uint8) {
+func combineGlottalAndFormants(speechData *SpeechData, audioState *AudioState, phase1, phase2, phase3, Y uint8) {
 	var tmp uint32
 
-	tmp = uint32(multtable[sinus[phase1]|amplitude1[Y]])
-	tmp += uint32(multtable[sinus[phase2]|amplitude2[Y]])
+	tmp = uint32(multtable[sinus[phase1]|speechData.Amplitude1[Y]])
+	tmp += uint32(multtable[sinus[phase2]|speechData.Amplitude2[Y]])
 
 	if tmp > 255 {
 		tmp += 1
@@ -445,14 +446,14 @@ func combineGlottalAndFormants(phase1, phase2, phase3, Y uint8) {
 		tmp += 0
 	}
 
-	tmp += uint32(multtable[rectangle[phase3]|amplitude3[Y]])
+	tmp += uint32(multtable[rectangle[phase3]|speechData.Amplitude3[Y]])
 	tmp += 136
 	tmp >>= 4 // Scale down to 0..15 range of C64 audio.
 
-	output(0, uint8(tmp&0xf))
+	output(audioState, 0, uint8(tmp&0xf))
 }
 
-func renderSample(mem66OpenBrace *uint8, consonantFlag, mem49 uint8) {
+func renderSample(speechData *SpeechData, audioState *AudioState, mem66OpenBrace *uint8, consonantFlag, mem49 uint8) {
 	// mask low three bits and subtract 1 to get value to
 	// convert 0 bits on unvoiced samples.
 	hibyte := (consonantFlag & 7) - 1
@@ -469,22 +470,22 @@ func renderSample(mem66OpenBrace *uint8, consonantFlag, mem49 uint8) {
 	pitchl := consonantFlag & 248
 	if pitchl == 0 {
 		// voiced phoneme: Z*, ZH, V*, DH
-		pitchl = pitches[mem49] >> 4
-		*mem66OpenBrace = renderVoicedSample(hi, *mem66OpenBrace, pitchl^255)
+		pitchl = speechData.Pitches[mem49] >> 4
+		*mem66OpenBrace = renderVoicedSample(audioState, hi, *mem66OpenBrace, pitchl^255)
 	} else {
-		renderUnvoicedSample(hi, pitchl^255, tab48426[hibyte])
+		renderUnvoicedSample(audioState, hi, pitchl^255, tab48426[hibyte])
 	}
 }
 
-func renderUnvoicedSample(hi uint16, off, mem53 uint8) {
+func renderUnvoicedSample(audioState *AudioState, hi uint16, off, mem53 uint8) {
 	for {
 		bit := uint8(8)
 		sample := sampleTable[hi+uint16(off)]
 		for bit != 0 {
 			if (sample & 128) != 0 {
-				output(2, 5)
+				output(audioState, 2, 5)
 			} else {
-				output(1, mem53)
+				output(audioState, 1, mem53)
 			}
 			sample <<= 1
 			bit--
@@ -496,12 +497,12 @@ func renderUnvoicedSample(hi uint16, off, mem53 uint8) {
 	}
 }
 
-func getBufferLength() int {
-	return bufferpos
+func getBufferLength(audioState *AudioState) int {
+	return audioState.BufferPos
 }
 
-func handleCh2(ch byte, mem int, inputTemp []byte) int {
-	x = byte(mem)
+func handleCh2(samState *SamState, ch byte, mem int, inputTemp []byte) int {
+	samState.X = byte(mem)
 	tmp := tab36376[inputTemp[mem]]
 	if ch == ' ' {
 		if tmp&128 != 0 {
@@ -579,34 +580,34 @@ func handleCh2(ch byte, mem int, inputTemp []byte) int {
 // the index 255 is placed at the end of the phonemeIndexTable[], and the
 // function returns with a 1 indicating success.
 
-func parser1() bool {
+func parser1(phonemeState *PhonemeState, inputState *InputState) bool {
 	var sign1 byte
 	position := byte(0)
 	srcpos := byte(0)
 
 	// Clear the stress table
-	for i := range stress[:256] {
-		stress[i] = 0
+	for i := range phonemeState.Stress[:256] {
+		phonemeState.Stress[i] = 0
 	}
 
 	for {
-		sign1 = input[srcpos]
+		sign1 = inputState.Input[srcpos]
 		if sign1 == 155 { // 155 (\233) is end of line marker
 			break
 		}
 
 		var match int
 		srcpos++
-		sign2 := input[srcpos]
+		sign2 := inputState.Input[srcpos]
 
 		if match = fullMatch(sign1, sign2); match != -1 {
 			// Matched both characters (no wildcards)
-			phonemeindex[position] = byte(match)
+			phonemeState.PhonemeIndex[position] = byte(match)
 			position++
 			srcpos++ // Skip the second character of the input as we've matched it
 		} else if match = wildMatch(sign1); match != -1 {
 			// Matched just the first character (with second character matching '*')
-			phonemeindex[position] = byte(match)
+			phonemeState.PhonemeIndex[position] = byte(match)
 			position++
 		} else {
 			// Should be a stress character. Search through the stress table backwards.
@@ -619,40 +620,43 @@ func parser1() bool {
 				return false // failure
 			}
 
-			stress[position-1] = byte(match) // Set stress for prior phoneme
+			phonemeState.Stress[position-1] = byte(match) // Set stress for prior phoneme
 		}
 	}
 
-	phonemeindex[position] = END
+	phonemeState.PhonemeIndex[position] = END
 	return true
 }
 
-func samMain() bool {
-	initThings()
+func samMain(samState *SamState) bool {
+	samConfig := &samState.Config
+	phonemeState := &samState.Phonemes
+	inputState := &samState.Input
+	initThings(samState)
 
-	if !parser1() {
+	if !parser1(phonemeState, inputState) {
 		return false
 	}
-	if debug {
-		printPhonemes(phonemeindex, phonemeLength, stress)
+	if samConfig.Debug {
+		printPhonemes(phonemeState.PhonemeIndex, phonemeState.PhonemeLength, phonemeState.Stress)
 	}
-	parser2()
-	copyStress()
-	setPhonemeLength()
-	adjustLengths()
-	code41240()
-	for x := byte(0); phonemeindex[x] != 255; x++ {
-		if phonemeindex[x] > 80 {
-			phonemeindex[x] = 255
+	parser2(samConfig, phonemeState)
+	copyStress(phonemeState)
+	setPhonemeLength(phonemeState)
+	adjustLengths(phonemeState, samConfig)
+	code41240(phonemeState)
+	for x := byte(0); phonemeState.PhonemeIndex[x] != 255; x++ {
+		if phonemeState.PhonemeIndex[x] > 80 {
+			phonemeState.PhonemeIndex[x] = 255
 			break
 		}
 	}
-	insertBreath()
+	insertBreath(phonemeState)
 
-	if debug {
-		printPhonemes(phonemeindex, phonemeLength, stress)
+	if samConfig.Debug {
+		printPhonemes(phonemeState.PhonemeIndex, phonemeState.PhonemeLength, phonemeState.Stress)
 	}
-	prepareOutput()
+	prepareOutput(samState)
 	return true
 }
 
@@ -690,11 +694,14 @@ func min(l, r int) int {
 	return r
 }
 
-func createFrames() {
-	x = byte(0)
+func createFrames(samState *SamState) {
+	speechData := &samState.Speech
+	phonemeState := &samState.Phonemes
+	samConfig := &samState.Config
+	samState.X = byte(0)
 	for i := 0; i < 256; i++ {
 		// get the phoneme at the index
-		phoneme := phonemeIndexOutput[i]
+		phoneme := phonemeState.PhonemeIndexOutput[i]
 
 		// if terminal phoneme, exit the loop
 		if phoneme == 255 {
@@ -702,37 +709,38 @@ func createFrames() {
 		}
 
 		if phoneme == PHONEME_PERIOD {
-			addInflection(RISING_INFLECTION, x)
+			addInflection(speechData, RISING_INFLECTION, samState.X)
 		} else if phoneme == PHONEME_QUESTION {
-			addInflection(FALLING_INFLECTION, x)
+			addInflection(speechData, FALLING_INFLECTION, samState.X)
 		}
 
 		// get the stress amount (more stress = higher pitch)
-		phase1 := tab47492[stressOutput[i]+1]
+		phase1 := tab47492[phonemeState.StressOutput[i]+1]
 
 		// get number of frames to write
-		phase2 := phonemeLengthOutput[i]
+		phase2 := phonemeState.PhonemeLengthOutput[i]
 
 		// copy from the source to the frames list
 		for phase2 != 0 {
-			frequency1[x] = freq1data[phoneme]                       // F1 frequency
-			frequency2[x] = freq2data[phoneme]                       // F2 frequency
-			frequency3[x] = freq3data[phoneme]                       // F3 frequency
-			amplitude1[x] = ampl1data[phoneme]                       // F1 amplitude
-			amplitude2[x] = ampl2data[phoneme]                       // F2 amplitude
-			amplitude3[x] = ampl3data[phoneme]                       // F3 amplitude
-			sampledConsonantFlag[x] = sampledConsonantFlags[phoneme] // phoneme data for sampled consonants
-			pitches[x] = pitch + phase1                              // pitch
+			speechData.Frequency1[samState.X] = freq1data[phoneme]                       // F1 frequency
+			speechData.Frequency2[samState.X] = freq2data[phoneme]                       // F2 frequency
+			speechData.Frequency3[samState.X] = freq3data[phoneme]                       // F3 frequency
+			speechData.Amplitude1[samState.X] = ampl1data[phoneme]                       // F1 amplitude
+			speechData.Amplitude2[samState.X] = ampl2data[phoneme]                       // F2 amplitude
+			speechData.Amplitude3[samState.X] = ampl3data[phoneme]                       // F3 amplitude
+			speechData.SampledConsonantFlag[samState.X] = sampledConsonantFlags[phoneme] // phoneme data for sampled consonants
+			speechData.Pitches[samState.X] = samConfig.Pitch + phase1                    // pitch
 
-			x++
+			samState.X++
 			phase2--
 		}
 	}
 }
 
-func code37055(npos, mask byte) bool {
-	x = npos
-	result := tab36376[inputTemp[x]] & mask
+func code37055(samState *SamState, npos, mask byte) bool {
+	inputState := &samState.Input
+	samState.X = npos
+	result := tab36376[inputState.InputTemp[samState.X]] & mask
 	if result == 0 {
 		return false
 	} else {
@@ -740,7 +748,7 @@ func code37055(npos, mask byte) bool {
 	}
 }
 
-func createTransitions() uint8 {
+func createTransitions(phonemeState *PhonemeState, speechData *SpeechData) uint8 {
 	var mem49 uint8 = 0
 	var pos uint8 = 0
 
@@ -753,8 +761,8 @@ func createTransitions() uint8 {
 		var phase3 uint8
 		var transition uint8
 
-		phoneme := phonemeIndexOutput[pos]
-		nextPhoneme := phonemeIndexOutput[pos+1]
+		phoneme := phonemeState.PhonemeIndexOutput[pos]
+		nextPhoneme := phonemeState.PhonemeIndexOutput[pos+1]
 
 		if nextPhoneme == 255 {
 			break // 255 == end_token
@@ -780,7 +788,7 @@ func createTransitions() uint8 {
 			phase2 = inBlendLength[phoneme]
 		}
 
-		mem49 += phonemeLengthOutput[pos]
+		mem49 += phonemeState.PhonemeLengthOutput[pos]
 
 		speedcounter = mem49 + phase2
 		phase3 = mem49 - phase1
@@ -788,7 +796,7 @@ func createTransitions() uint8 {
 
 		if ((transition - 2) & 128) == 0 {
 			table := uint8(169)
-			interpolatePitch(pos, mem49, phase3)
+			interpolatePitch(speechData, phonemeState, pos, mem49, phase3)
 			for table < 175 {
 				// tables:
 				// 168  pitches[]
@@ -799,8 +807,8 @@ func createTransitions() uint8 {
 				// 173  amplitude2
 				// 174  amplitude3
 
-				value := int8(read(table, speedcounter)) - int8(read(table, phase3))
-				interpolate(transition, table, phase3, value)
+				value := int8(read(speechData, table, speedcounter)) - int8(read(speechData, table, phase3))
+				interpolate(speechData, transition, table, phase3, value)
 				table++
 			}
 		}
@@ -808,7 +816,7 @@ func createTransitions() uint8 {
 	}
 
 	// add the length of this phoneme
-	return mem49 + phonemeLengthOutput[pos]
+	return mem49 + phonemeState.PhonemeLengthOutput[pos]
 }
 
 func getRuleByte(mem62 uint16, y byte) byte {
@@ -821,28 +829,28 @@ func getRuleByte(mem62 uint16, y byte) byte {
 	return rules[address+int(y)]
 }
 
-func read(p, y byte) byte {
+func read(speechData *SpeechData, p, y byte) byte {
 	switch p {
 	case 168:
-		return pitches[y]
+		return speechData.Pitches[y]
 	case 169:
-		return frequency1[y]
+		return speechData.Frequency1[y]
 	case 170:
-		return frequency2[y]
+		return speechData.Frequency2[y]
 	case 171:
-		return frequency3[y]
+		return speechData.Frequency3[y]
 	case 172:
-		return amplitude1[y]
+		return speechData.Amplitude1[y]
 	case 173:
-		return amplitude2[y]
+		return speechData.Amplitude2[y]
 	case 174:
-		return amplitude3[y]
+		return speechData.Amplitude3[y]
 	default:
 		panic("Error reading from tables")
 	}
 }
 
-func addInflection(inflection, pos byte) {
+func addInflection(speechData *SpeechData, inflection, pos byte) {
 	end := pos
 
 	if pos < 30 {
@@ -852,59 +860,59 @@ func addInflection(inflection, pos byte) {
 	}
 
 	var a byte
-	for pitches[pos] == 127 {
+	for speechData.Pitches[pos] == 127 {
 		pos++
 	}
-	a = pitches[pos]
+	a = speechData.Pitches[pos]
 
 	for pos != end {
 		a += inflection
-		pitches[pos] = a
+		speechData.Pitches[pos] = a
 
 		for {
 			pos++
 			if pos == end {
 				break // Exit loop if we've reached the end
 			}
-			if pitches[pos] != 255 {
+			if speechData.Pitches[pos] != 255 {
 				break // Exit loop if we've found a non-255 pitch
 			}
 		}
 	}
 }
 
-func assignPitchContour() {
+func assignPitchContour(speechData *SpeechData) {
 	for i := 0; i < 256; i++ {
-		pitches[i] -= (frequency1[i] >> 1)
+		speechData.Pitches[i] -= (speechData.Frequency1[i] >> 1)
 	}
 }
 
-func changeRule(position, mem60InputMatchPos byte, descr string) {
-	if debug {
+func changeRule(phonemeState *PhonemeState, samConfig *SamConfig, position, mem60InputMatchPos byte, descr string) {
+	if samConfig.Debug {
 		fmt.Printf("RULE: %s\n", descr)
 	}
-	phonemeindex[position] = 13 // rule
-	insert(position+1, mem60InputMatchPos, 0, stress[position])
+	phonemeState.PhonemeIndex[position] = 13 // rule
+	insert(phonemeState, position+1, mem60InputMatchPos, 0, phonemeState.Stress[position])
 }
 
-func change(pos, val byte, rule string) {
-	if debug {
+func change(phonemeState *PhonemeState, samConfig *SamConfig, pos, val byte, rule string) {
+	if samConfig.Debug {
 		fmt.Printf("RULE: %s\n", rule)
 	}
-	phonemeindex[pos] = val
+	phonemeState.PhonemeIndex[pos] = val
 }
 
-func code41240() {
+func code41240(phonemeState *PhonemeState) {
 	pos := byte(0)
-	for phonemeindex[pos] != 255 { // 255 == END
-		index := phonemeindex[pos]
+	for phonemeState.PhonemeIndex[pos] != 255 { // 255 == END
+		index := phonemeState.PhonemeIndex[pos]
 		if (flags[index] & FLAG_STOPCONS) != 0 {
 			if (flags[index] & FLAG_PLOSIVE) != 0 {
 				x := pos
-				for phonemeindex[x+1] == 0 {
+				for phonemeState.PhonemeIndex[x+1] == 0 {
 					x++ // Skip pause
 				}
-				a := phonemeindex[x+1]
+				a := phonemeState.PhonemeIndex[x+1]
 				if a != 255 { // END
 					if (flags[a]&8) != 0 || a == 36 || a == 37 {
 						pos++
@@ -912,23 +920,23 @@ func code41240() {
 					}
 				}
 			}
-			insert(pos+1, index+1, phonemeLengthTable[index+1], stress[pos])
-			insert(pos+2, index+2, phonemeLengthTable[index+2], stress[pos])
+			insert(phonemeState, pos+1, index+1, phonemeLengthTable[index+1], phonemeState.Stress[pos])
+			insert(phonemeState, pos+2, index+2, phonemeLengthTable[index+2], phonemeState.Stress[pos])
 			pos += 2
 		}
 		pos++
 	}
 }
 
-func copyStress() {
+func copyStress(phonemeState *PhonemeState) {
 	pos := byte(0)
-	for phonemeindex[pos] != 255 { // 255 == END
-		if (flags[phonemeindex[pos]] & 64) != 0 {
-			y := phonemeindex[pos+1]
+	for phonemeState.PhonemeIndex[pos] != 255 { // 255 == END
+		if (flags[phonemeState.PhonemeIndex[pos]] & 64) != 0 {
+			y := phonemeState.PhonemeIndex[pos+1]
 			if y != 255 && (flags[y]&128) != 0 {
-				y = stress[pos+1]
+				y = phonemeState.Stress[pos+1]
 				if y != 0 && (y&128) == 0 {
-					stress[pos] = y + 1
+					phonemeState.Stress[pos] = y + 1
 				}
 			}
 		}
@@ -936,19 +944,19 @@ func copyStress() {
 	}
 }
 
-func DescribeRule(str string) {
-	if debug {
+func DescribeRule(samConfig *SamConfig, str string) {
+	if samConfig.Debug {
 		fmt.Printf("RULE: %s\n", str)
 	}
 }
 
-func adjustLengths() {
+func adjustLengths(phonemeState *PhonemeState, samConfig *SamConfig) {
 	// LENGTHEN VOWELS PRECEDING PUNCTUATION
 	{
 		X := byte(0)
 		var index byte
 
-		for index = phonemeindex[X]; index != END; index = phonemeindex[X] {
+		for index = phonemeState.PhonemeIndex[X]; index != END; index = phonemeState.PhonemeIndex[X] {
 			var loopIndex byte
 
 			// not punctuation?
@@ -962,7 +970,7 @@ func adjustLengths() {
 			// Back up to the first vowel
 			for X > 0 {
 				X = X - 1 // Decrement X
-				if (flags[phonemeindex[X]] & FLAG_VOWEL) != 0 {
+				if (flags[phonemeState.PhonemeIndex[X]] & FLAG_VOWEL) != 0 {
 					break // Exit the loop if a vowel is found
 				}
 			}
@@ -973,15 +981,15 @@ func adjustLengths() {
 
 			for {
 				// test for vowel
-				index = phonemeindex[X]
+				index = phonemeState.PhonemeIndex[X]
 
 				// test for fricative/unvoiced or not voiced
 				if (flags[index]&FLAG_FRICATIVE) == 0 || (flags[index]&FLAG_VOICED) != 0 { // nochmal überprüfen
-					A := phonemeLength[X]
+					A := phonemeState.PhonemeLength[X]
 					// change phoneme length to (length * 1.5) + 1
-					describeRulePre("Lengthen <FRICATIVE> or <VOICED> between <VOWEL> and <PUNCTUATION> by 1.5", X)
-					phonemeLength[X] = (A >> 1) + A + 1
-					describeRulePost(X)
+					describeRulePre(samConfig, phonemeState, "Lengthen <FRICATIVE> or <VOICED> between <VOWEL> and <PUNCTUATION> by 1.5", X)
+					phonemeState.PhonemeLength[X] = (A >> 1) + A + 1
+					describeRulePost(samConfig, phonemeState, X)
 				}
 				X = X + 1
 				if X == loopIndex {
@@ -998,18 +1006,18 @@ func adjustLengths() {
 	loopIndex := byte(0)
 	var index byte
 
-	for index = phonemeindex[loopIndex]; index != END; index = phonemeindex[loopIndex] {
+	for index = phonemeState.PhonemeIndex[loopIndex]; index != END; index = phonemeState.PhonemeIndex[loopIndex] {
 		X := loopIndex
 
 		if (flags[index] & FLAG_VOWEL) != 0 {
-			index = phonemeindex[loopIndex+1]
+			index = phonemeState.PhonemeIndex[loopIndex+1]
 			if (flags[index] & FLAG_CONSONANT) == 0 {
 				if index == 18 || index == 19 { // 'RX', 'LX'
-					index = phonemeindex[loopIndex+2]
+					index = phonemeState.PhonemeIndex[loopIndex+2]
 					if (flags[index] & FLAG_CONSONANT) != 0 {
-						describeRulePre("<VOWEL> <RX | LX> <CONSONANT> - decrease length of vowel by 1\n", loopIndex)
-						phonemeLength[loopIndex] = phonemeLength[loopIndex] - 1
-						describeRulePost(loopIndex)
+						describeRulePre(samConfig, phonemeState, "<VOWEL> <RX | LX> <CONSONANT> - decrease length of vowel by 1\n", loopIndex)
+						phonemeState.PhonemeLength[loopIndex] = phonemeState.PhonemeLength[loopIndex] - 1
+						describeRulePost(samConfig, phonemeState, loopIndex)
 					}
 				}
 			} else { // Got here if not <VOWEL>
@@ -1025,16 +1033,16 @@ func adjustLengths() {
 					if (flag & FLAG_PLOSIVE) != 0 { // unvoiced plosive
 						// RULE: <VOWEL> <UNVOICED PLOSIVE>
 						// <VOWEL> <P*, T*, K*, KX>
-						describeRulePre("<VOWEL> <UNVOICED PLOSIVE> - decrease vowel by 1/8th", loopIndex)
-						phonemeLength[loopIndex] = phonemeLength[loopIndex] - (phonemeLength[loopIndex] >> 3)
-						describeRulePost(loopIndex)
+						describeRulePre(samConfig, phonemeState, "<VOWEL> <UNVOICED PLOSIVE> - decrease vowel by 1/8th", loopIndex)
+						phonemeState.PhonemeLength[loopIndex] = phonemeState.PhonemeLength[loopIndex] - (phonemeState.PhonemeLength[loopIndex] >> 3)
+						describeRulePost(samConfig, phonemeState, loopIndex)
 					}
 				} else {
-					describeRulePre("<VOWEL> <VOICED CONSONANT> - increase vowel by 1/2 + 1\n", X-1)
+					describeRulePre(samConfig, phonemeState, "<VOWEL> <VOICED CONSONANT> - increase vowel by 1/2 + 1\n", X-1)
 					// decrease length
-					A := phonemeLength[loopIndex]
-					phonemeLength[loopIndex] = (A >> 2) + A + 1 // 5/4*A + 1
-					describeRulePost(loopIndex)
+					A := phonemeState.PhonemeLength[loopIndex]
+					phonemeState.PhonemeLength[loopIndex] = (A >> 2) + A + 1 // 5/4*A + 1
+					describeRulePost(samConfig, phonemeState, loopIndex)
 				}
 			}
 		} else if (flags[index] & FLAG_NASAL) != 0 { // nasal?
@@ -1042,11 +1050,11 @@ func adjustLengths() {
 			//       Set punctuation length to 6
 			//       Set stop consonant length to 5
 			X = X + 1
-			index = phonemeindex[X]
+			index = phonemeState.PhonemeIndex[X]
 			if index != END && (flags[index]&FLAG_STOPCONS) != 0 {
-				DescribeRule("<NASAL> <STOP CONSONANT> - set nasal = 5, consonant = 6")
-				phonemeLength[X] = 6   // set stop consonant length to 6
-				phonemeLength[X-1] = 5 // set nasal length to 5
+				DescribeRule(samConfig, "<NASAL> <STOP CONSONANT> - set nasal = 5, consonant = 6")
+				phonemeState.PhonemeLength[X] = 6   // set stop consonant length to 6
+				phonemeState.PhonemeLength[X-1] = 5 // set nasal length to 5
 			}
 		} else if (flags[index] & FLAG_STOPCONS) != 0 { // (voiced) stop consonant?
 			// RULE: <VOICED STOP CONSONANT> {optional silence} <STOP CONSONANT>
@@ -1054,54 +1062,54 @@ func adjustLengths() {
 
 			// move past silence
 			X = X + 1
-			for phonemeindex[X] == 0 {
+			for phonemeState.PhonemeIndex[X] == 0 {
 				X = X + 1
 			}
-			index = phonemeindex[X]
+			index = phonemeState.PhonemeIndex[X]
 
 			if index != END && (flags[index]&FLAG_STOPCONS) != 0 {
 				// FIXME, this looks wrong?
 				// RULE: <UNVOICED STOP CONSONANT> {optional silence} <STOP CONSONANT>
-				DescribeRule("<UNVOICED STOP CONSONANT> {optional silence} <STOP CONSONANT> - shorten both to 1/2 + 1")
-				phonemeLength[X] = (phonemeLength[X] >> 1) + 1
-				phonemeLength[loopIndex] = (phonemeLength[loopIndex] >> 1) + 1
+				DescribeRule(samConfig, "<UNVOICED STOP CONSONANT> {optional silence} <STOP CONSONANT> - shorten both to 1/2 + 1")
+				phonemeState.PhonemeLength[X] = (phonemeState.PhonemeLength[X] >> 1) + 1
+				phonemeState.PhonemeLength[loopIndex] = (phonemeState.PhonemeLength[loopIndex] >> 1) + 1
 				X = loopIndex
 			}
 		} else if (flags[index] & FLAG_LIQUIC) != 0 { // liquic consonant?
 			// RULE: <VOICED NON-VOWEL> <DIPTHONG>
 			//       Decrease <DIPTHONG> by 2
-			index = phonemeindex[X-1] // prior phoneme;
+			index = phonemeState.PhonemeIndex[X-1] // prior phoneme;
 
 			// FIXME: The debug code here breaks the rule.
 			// prior phoneme a stop consonant>
 			if (flags[index] & FLAG_STOPCONS) != 0 {
-				describeRulePre("<LIQUID CONSONANT> <DIPTHONG> - decrease by 2", X)
+				describeRulePre(samConfig, phonemeState, "<LIQUID CONSONANT> <DIPTHONG> - decrease by 2", X)
 			}
 
-			phonemeLength[X] = phonemeLength[X] - 2 // 20ms
-			describeRulePost(X)
+			phonemeState.PhonemeLength[X] = phonemeState.PhonemeLength[X] - 2 // 20ms
+			describeRulePost(samConfig, phonemeState, X)
 		}
 
 		loopIndex = loopIndex + 1
 	}
 }
 
-func enableSingmode() {
-	singmode = true
+func enableSingmode(samConfig *SamConfig) {
+	samConfig.SingMode = true
 }
 
-func insertBreath() {
+func insertBreath(phonemeState *PhonemeState) {
 	mem54 := byte(255)
 	len := byte(0)
 	pos := byte(0)
 
 	for {
-		index := phonemeindex[pos]
+		index := phonemeState.PhonemeIndex[pos]
 		if index == 255 { // END
 			break
 		}
 
-		len += phonemeLength[pos]
+		len += phonemeState.PhonemeLength[pos]
 		if len < 232 {
 			if index == BREAK {
 				// Do nothing
@@ -1111,40 +1119,40 @@ func insertBreath() {
 				}
 			} else {
 				len = 0
-				insert(pos+1, BREAK, 0, 0)
+				insert(phonemeState, pos+1, BREAK, 0, 0)
 			}
 		} else {
 			pos = mem54
-			phonemeindex[pos] = 31 // 'Q*' glottal stop
-			phonemeLength[pos] = 4
-			stress[pos] = 0
+			phonemeState.PhonemeIndex[pos] = 31 // 'Q*' glottal stop
+			phonemeState.PhonemeLength[pos] = 4
+			phonemeState.Stress[pos] = 0
 
 			len = 0
-			insert(pos+1, BREAK, 0, 0)
+			insert(phonemeState, pos+1, BREAK, 0, 0)
 		}
 		pos++
 	}
 }
 
-func insert(position, mem60InputMatchPos, mem59, mem58Variant byte) {
+func insert(phonemeState *PhonemeState, position, mem60InputMatchPos, mem59, mem58Variant byte) {
 	for i := 253; i >= int(position); i-- {
-		phonemeindex[i+1] = phonemeindex[i]
-		phonemeLength[i+1] = phonemeLength[i]
-		stress[i+1] = stress[i]
+		phonemeState.PhonemeIndex[i+1] = phonemeState.PhonemeIndex[i]
+		phonemeState.PhonemeLength[i+1] = phonemeState.PhonemeLength[i]
+		phonemeState.Stress[i+1] = phonemeState.Stress[i]
 	}
 
-	phonemeindex[position] = mem60InputMatchPos
-	phonemeLength[position] = mem59
-	stress[position] = mem58Variant
+	phonemeState.PhonemeIndex[position] = mem60InputMatchPos
+	phonemeState.PhonemeLength[position] = mem59
+	phonemeState.Stress[position] = mem58Variant
 }
 
-func interpolate(width, table, frame byte, mem53 int8) {
+func interpolate(speechData *SpeechData, width, table, frame byte, mem53 int8) {
 	sign := mem53 < 0
 	remainder := byte(abs(int(mem53))) % width
 	div := uint8(int(mem53) / int(width))
 	error := byte(0)
 	pos := width
-	val := read(table, frame) + div
+	val := read(speechData, table, frame) + div
 
 	pos--
 	for pos > 0 {
@@ -1158,25 +1166,26 @@ func interpolate(width, table, frame byte, mem53 int8) {
 			}
 		}
 		frame++
-		write(table, frame, val) // Write updated value back to next frame.
+		write(speechData, table, frame, val) // Write updated value back to next frame.
 		val += div
 		pos--
 	}
 }
 
 func trans(a, b byte) byte {
-	return byte(((uint16(a) * uint16(b)) >> 8) << 1)
+	result := byte(((uint16(a) * uint16(b)) >> 8) << 1)
+	return result
 }
 
-func interpolatePitch(pos, mem49, phase3 byte) {
+func interpolatePitch(speechData *SpeechData, phonemeState *PhonemeState, pos, mem49, phase3 byte) {
 	// half the width of the current and next phoneme
-	curWidth := phonemeLengthOutput[pos] / 2
-	nextWidth := phonemeLengthOutput[pos+1] / 2
+	curWidth := phonemeState.PhonemeLengthOutput[pos] / 2
+	nextWidth := phonemeState.PhonemeLengthOutput[pos+1] / 2
 
 	// sum the values
 	width := curWidth + nextWidth
-	pitch := int8(pitches[nextWidth+mem49]) - int8(pitches[mem49-curWidth])
-	interpolate(width, 168, phase3, pitch)
+	pitch := int8(speechData.Pitches[nextWidth+mem49]) - int8(speechData.Pitches[mem49-curWidth])
+	interpolate(speechData, width, 168, phase3, pitch)
 }
 
 func abs(x int) int {
@@ -1186,26 +1195,28 @@ func abs(x int) int {
 	return x
 }
 
-func prepareOutput() {
+func prepareOutput(samState *SamState) {
+
+	phonemeState := &samState.Phonemes
 	srcpos := byte(0)
 	destpos := byte(0)
 
 	for {
-		a := phonemeindex[srcpos]
-		phonemeIndexOutput[destpos] = a
+		a := phonemeState.PhonemeIndex[srcpos]
+		phonemeState.PhonemeIndexOutput[destpos] = a
 		switch a {
 		case 255:
-			render()
+			render(samState)
 			return
 		case 254:
-			phonemeIndexOutput[destpos] = 255
-			render()
+			phonemeState.PhonemeIndexOutput[destpos] = 255
+			render(samState)
 			destpos = 0
 		case 0:
 			// Do nothing
 		default:
-			phonemeLengthOutput[destpos] = phonemeLength[srcpos]
-			stressOutput[destpos] = stress[srcpos]
+			phonemeState.PhonemeLengthOutput[destpos] = phonemeState.PhonemeLength[srcpos]
+			phonemeState.StressOutput[destpos] = phonemeState.Stress[srcpos]
 			destpos++
 		}
 		srcpos++
@@ -1246,19 +1257,19 @@ func printPhonemes(phonemeIndex, phonemeLength, stress []byte) {
 	fmt.Println()
 }
 
-func parser2() {
+func parser2(samConfig *SamConfig, phonemeState *PhonemeState) {
 	pos := byte(0) // mem66_openBrace
 	var p byte
 
-	if debug {
+	if samConfig.Debug {
 		fmt.Println("Parser2")
 	}
 
-	for p = phonemeindex[pos]; p != END; p = phonemeindex[pos] {
+	for p = phonemeState.PhonemeIndex[pos]; p != END; p = phonemeState.PhonemeIndex[pos] {
 		var pf uint16
 		var prior byte
 
-		if debug {
+		if samConfig.Debug {
 			fmt.Printf("%d: %c%c\n", pos, signInputTable1[p], signInputTable2[p])
 		}
 
@@ -1268,56 +1279,54 @@ func parser2() {
 		}
 
 		pf = flags[p]
-		prior = phonemeindex[pos-1]
+		prior = phonemeState.PhonemeIndex[pos-1]
 
 		if (pf & FLAG_DIPTHONG) != 0 {
-			ruleDipthong(p, pf, pos)
+			ruleDipthong(phonemeState, samConfig, p, pf, pos)
 		} else if p == 78 {
-			changeRule(pos, 24, "UL -> AX L") // Example: MEDDLE
+			changeRule(phonemeState, samConfig, pos, 24, "UL -> AX L") // Example: MEDDLE
 		} else if p == 79 {
-			changeRule(pos, 27, "UM -> AX M") // Example: ASTRONOMY
+			changeRule(phonemeState, samConfig, pos, 27, "UM -> AX M") // Example: ASTRONOMY
 		} else if p == 80 {
-			changeRule(pos, 28, "UN -> AX N") // Example: FUNCTION
-		} else if (pf&FLAG_VOWEL) != 0 && stress[pos] != 0 {
+			changeRule(phonemeState, samConfig, pos, 28, "UN -> AX N") // Example: FUNCTION
+		} else if (pf&FLAG_VOWEL) != 0 && phonemeState.Stress[pos] != 0 {
 			// RULE:
 			//       <STRESSED VOWEL> <SILENCE> <STRESSED VOWEL> -> <STRESSED VOWEL>
 			//       <SILENCE> Q <VOWEL>
 			// EXAMPLE: AWAY EIGHT
-			if phonemeindex[pos+1] == 0 { // If following phoneme is a pause, get next
-				p = phonemeindex[pos+2]
-				if p != END && (flags[p]&FLAG_VOWEL) != 0 && stress[pos+2] != 0 {
-					DescribeRule("Insert glottal stop between two stressed vowels with space between them")
-					insert(pos+2, 31, 0, 0) // 31 = 'Q'
+			if phonemeState.PhonemeIndex[pos+1] == 0 { // If following phoneme is a pause, get next
+				p = phonemeState.PhonemeIndex[pos+2]
+				if p != END && (flags[p]&FLAG_VOWEL) != 0 && phonemeState.Stress[pos+2] != 0 {
+					DescribeRule(samConfig, "Insert glottal stop between two stressed vowels with space between them")
+					insert(phonemeState, pos+2, 31, 0, 0) // 31 = 'Q'
 				}
 			}
 		} else if p == pR { // RULES FOR PHONEMES BEFORE R
 			if prior == pT {
-				change(pos-1, 42, "T R -> CH R") // Example: TRACK
+				change(phonemeState, samConfig, pos-1, 42, "T R -> CH R") // Example: TRACK
 			} else if prior == pD {
-				change(pos-1, 44, "D R -> J R") // Example: DRY
+				change(phonemeState, samConfig, pos-1, 44, "D R -> J R") // Example: DRY
 			} else if (flags[prior] & FLAG_VOWEL) != 0 {
-				change(pos, 18, "<VOWEL> R -> <VOWEL> RX") // Example: ART
+				change(phonemeState, samConfig, pos, 18, "<VOWEL> R -> <VOWEL> RX") // Example: ART
 			}
 		} else if p == 24 && (flags[prior]&FLAG_VOWEL) != 0 {
-			change(pos, 19, "<VOWEL> L -> <VOWEL> LX") // Example: ALL
+			change(phonemeState, samConfig, pos, 19, "<VOWEL> L -> <VOWEL> LX") // Example: ALL
 		} else if prior == 60 && p == 32 { // 'G' 'S'
 			// Can't get to fire -
 			//       1. The G -> GX rule intervenes
 			//       2. Reciter already replaces GS -> GZ
-			change(pos, 38, "G S -> G Z")
+			change(phonemeState, samConfig, pos, 38, "G S -> G Z")
 		} else if p == 60 {
-			ruleG(pos)
+			ruleG(samConfig, phonemeState, pos)
 		} else {
 			if p == 72 { // 'K'
 				// K <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> KX <VOWEL OR DIPTHONG NOT
 				// ENDING WITH IY> Example: COW
-				Y := phonemeindex[pos+1]
+				Y := phonemeState.PhonemeIndex[pos+1]
 				// If at end, replace current phoneme with KX
 				if (flags[Y]&FLAG_DIP_YX) == 0 ||
 					Y == END { // VOWELS AND DIPTHONGS ENDING WITH IY SOUND flag set?
-					change(pos, 75,
-						"K <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> KX <VOWEL OR "+
-							"DIPTHONG NOT ENDING WITH IY>")
+					change(phonemeState, samConfig, pos, 75, "K <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> KX <VOWEL OR DIPTHONG NOT ENDING WITH IY>")
 					p = 75
 					pf = flags[p]
 				}
@@ -1332,20 +1341,20 @@ func parser2() {
 				//      S KX -> S GX
 				// Examples: SPY, STY, SKY, SCOWL
 
-				if debug {
+				if samConfig.Debug {
 					fmt.Printf("RULE: S* %c%c -> S* %c%c\n", signInputTable1[p],
 						signInputTable2[p], signInputTable1[p-12],
 						signInputTable2[p-12])
 				}
-				phonemeindex[pos] = p - 12
+				phonemeState.PhonemeIndex[pos] = p - 12
 			} else if (pf & FLAG_PLOSIVE) == 0 {
-				p = phonemeindex[pos]
+				p = phonemeState.PhonemeIndex[pos]
 				if p == 53 {
-					ruleAlveolarUw(pos) // Example: NEW, DEW, SUE, ZOO, THOO, TOO
+					ruleAlveolarUw(phonemeState, samConfig, pos) // Example: NEW, DEW, SUE, ZOO, THOO, TOO
 				} else if p == 42 {
-					ruleCh(pos) // Example: CHEW
+					ruleCh(phonemeState, samConfig, pos) // Example: CHEW
 				} else if p == 44 {
-					ruleJ(pos) // Example: JAY
+					ruleJ(phonemeState, samConfig, pos) // Example: JAY
 				}
 			}
 
@@ -1355,14 +1364,13 @@ func parser2() {
 				//       <UNSTRESSED VOWEL> T <PAUSE> -> <UNSTRESSED VOWEL> DX <PAUSE>
 				//       <UNSTRESSED VOWEL> D <PAUSE>  -> <UNSTRESSED VOWEL> DX <PAUSE>
 				// Example: PARTY, TARDY
-				if (flags[phonemeindex[pos-1]] & FLAG_VOWEL) != 0 {
-					p = phonemeindex[pos+1]
+				if (flags[phonemeState.PhonemeIndex[pos-1]] & FLAG_VOWEL) != 0 {
+					p = phonemeState.PhonemeIndex[pos+1]
 					if p == 0 {
-						p = phonemeindex[pos+2]
+						p = phonemeState.PhonemeIndex[pos+2]
 					}
-					if (flags[p]&FLAG_VOWEL) != 0 && stress[pos+1] == 0 {
-						change(pos, 30,
-							"Soften T or D following vowel or ER and preceding a pause -> DX")
+					if (flags[p]&FLAG_VOWEL) != 0 && phonemeState.Stress[pos+1] == 0 {
+						change(phonemeState, samConfig, pos, 30, "Soften T or D following vowel or ER and preceding a pause -> DX")
 					}
 				}
 			}
@@ -1371,7 +1379,7 @@ func parser2() {
 	} // for
 }
 
-func processFrames(mem48 byte) {
+func processFrames(speechData *SpeechData, samConfig *SamConfig, audioState *AudioState, mem48 byte) {
 	speedcounter := byte(72)
 	phase1 := byte(0)
 	phase2 := byte(0)
@@ -1380,21 +1388,21 @@ func processFrames(mem48 byte) {
 
 	y := byte(0)
 
-	glottalPulse := pitches[0]
+	glottalPulse := speechData.Pitches[0]
 	mem38 := glottalPulse - (glottalPulse >> 2) // mem44 * 0.75
 
 	for mem48 != 0 {
-		flags := sampledConsonantFlag[y]
+		flags := speechData.SampledConsonantFlag[y]
 
 		// unvoiced sampled phoneme?
 		if (flags & 248) != 0 {
-			renderSample(&mem66OpenBrace, flags, y)
+			renderSample(speechData, audioState, &mem66OpenBrace, flags, y)
 			// skip ahead two in the phoneme buffer
 			y += 2
 			mem48 -= 2
-			speedcounter = speed
+			speedcounter = samConfig.Speed
 		} else {
-			combineGlottalAndFormants(phase1, phase2, phase3, y)
+			combineGlottalAndFormants(speechData, audioState, phase1, phase2, phase3, y)
 
 			speedcounter--
 			if speedcounter == 0 {
@@ -1404,7 +1412,7 @@ func processFrames(mem48 byte) {
 				if mem48 == 0 {
 					return
 				}
-				speedcounter = speed
+				speedcounter = samConfig.Speed
 			}
 
 			glottalPulse--
@@ -1416,20 +1424,20 @@ func processFrames(mem48 byte) {
 				// is the count non-zero and the sampled flag is zero?
 				if mem38 != 0 || flags == 0 {
 					// reset the phase of the formants to match the pulse
-					phase1 += frequency1[y]
-					phase2 += frequency2[y]
-					phase3 += frequency3[y]
+					phase1 += speechData.Frequency1[y]
+					phase2 += speechData.Frequency2[y]
+					phase3 += speechData.Frequency3[y]
 					continue
 				}
 
 				// voiced sampled phonemes interleave the sample with the
 				// glottal pulse. The sample flag is non-zero, so render
 				// the sample for the phoneme.
-				renderSample(&mem66OpenBrace, flags, y)
+				renderSample(speechData, audioState, &mem66OpenBrace, flags, y)
 			}
 		}
 
-		glottalPulse = pitches[y]
+		glottalPulse = speechData.Pitches[y]
 		mem38 = glottalPulse - (glottalPulse >> 2) // mem44 * 0.75
 
 		// reset the formant wave generators to keep them in
@@ -1440,43 +1448,49 @@ func processFrames(mem48 byte) {
 	}
 }
 
-func render() {
-	if phonemeIndexOutput[0] == 255 {
+func render(samState *SamState) {
+
+	phonemeState := &samState.Phonemes
+	samConfig := &samState.Config
+	speechData := &samState.Speech
+	audioState := &samState.Audio
+
+	if phonemeState.PhonemeIndexOutput[0] == 255 {
 		return // exit if no data
 	}
 
-	createFrames()
-	t := createTransitions()
+	createFrames(samState)
+	t := createTransitions(phonemeState, speechData)
 
-	if !singmode {
-		assignPitchContour()
+	if !samConfig.SingMode {
+		assignPitchContour(speechData)
 	}
-	rescaleAmplitude()
+	rescaleAmplitude(speechData)
 
-	if debug {
-		printOutput(sampledConsonantFlag, frequency1, frequency2, frequency3, amplitude1, amplitude2, amplitude3, pitches)
+	if samConfig.Debug {
+		printOutput(speechData.SampledConsonantFlag, speechData.Frequency1, speechData.Frequency2, speechData.Frequency3, speechData.Amplitude1, speechData.Amplitude2, speechData.Amplitude3, speechData.Pitches)
 	}
 
-	processFrames(t)
+	processFrames(speechData, samConfig, audioState, t)
 }
 
 // RESCALE AMPLITUDE
 //
 // Rescale volume from a linear scale to decibels.
-func rescaleAmplitude() {
+func rescaleAmplitude(speechData *SpeechData) {
 	for i := 255; i >= 0; i-- {
-		amplitude1[i] = amplitudeRescale[amplitude1[i]]
-		amplitude2[i] = amplitudeRescale[amplitude2[i]]
-		amplitude3[i] = amplitudeRescale[amplitude3[i]]
+		speechData.Amplitude1[i] = amplitudeRescale[speechData.Amplitude1[i]]
+		speechData.Amplitude2[i] = amplitudeRescale[speechData.Amplitude2[i]]
+		speechData.Amplitude3[i] = amplitudeRescale[speechData.Amplitude3[i]]
 	}
 }
 
-func output(index int, A byte) {
-	bufferpos += timetable[oldtimetableindex][index]
-	oldtimetableindex = index
+func output(audioState *AudioState, index int, A byte) {
+	audioState.BufferPos += timetable[audioState.OldTimeTableIndex][index]
+	audioState.OldTimeTableIndex = index
 	// write a little bit in advance
 	for k := 0; k < 5; k++ {
-		buffer[bufferpos/50+k] = (A & 15) * 16
+		audioState.Buffer[audioState.BufferPos/50+k] = (A & 15) * 16
 	}
 }
 
@@ -1523,20 +1537,20 @@ func printUsage() {
 	fmt.Println("Q            kitt-en (glottal stop)    /H        a(h)ead")
 }
 
-func ruleAlveolarUw(x byte) {
+func ruleAlveolarUw(phonemeState *PhonemeState, samConfig *SamConfig, x byte) {
 	// ALVEOLAR flag set?
-	if (flags[phonemeindex[x-1]] & FLAG_ALVEOLAR) != 0 {
-		DescribeRule("<ALVEOLAR> UW -> <ALVEOLAR> UX")
-		phonemeindex[x] = 16
+	if (flags[phonemeState.PhonemeIndex[x-1]] & FLAG_ALVEOLAR) != 0 {
+		DescribeRule(samConfig, "<ALVEOLAR> UW -> <ALVEOLAR> UX")
+		phonemeState.PhonemeIndex[x] = 16
 	}
 }
 
-func ruleCh(x byte) {
-	DescribeRule("CH -> CH CH+1")
-	insert(x+1, 43, 0, stress[x])
+func ruleCh(phonemeState *PhonemeState, samConfig *SamConfig, x byte) {
+	DescribeRule(samConfig, "CH -> CH CH+1")
+	insert(phonemeState, x+1, 43, 0, phonemeState.Stress[x])
 }
 
-func ruleDipthong(p byte, pf uint16, pos byte) {
+func ruleDipthong(phonemeState *PhonemeState, samConfig *SamConfig, p byte, pf uint16, pos byte) {
 	// <DIPTHONG ENDING WITH WX> -> <DIPTHONG ENDING WITH WX> WX
 	// <DIPTHONG NOT ENDING WITH WX> -> <DIPTHONG NOT ENDING WITH WX> YX
 	// Example: OIL, COW
@@ -1550,38 +1564,38 @@ func ruleDipthong(p byte, pf uint16, pos byte) {
 	}
 	// Insert at WX or YX following, copying the stress
 	if a == 20 {
-		DescribeRule("insert WX following dipthong NOT ending in IY sound")
+		DescribeRule(samConfig, "insert WX following dipthong NOT ending in IY sound")
 	} else if a == 21 {
-		DescribeRule("insert YX following dipthong ending in IY sound")
+		DescribeRule(samConfig, "insert YX following dipthong ending in IY sound")
 	}
-	insert(pos+1, a, 0, stress[pos])
+	insert(phonemeState, pos+1, a, 0, phonemeState.Stress[pos])
 
 	if p == 53 {
-		ruleAlveolarUw(pos) // Example: NEW, DEW, SUE, ZOO, THOO, TOO
+		ruleAlveolarUw(phonemeState, samConfig, pos) // Example: NEW, DEW, SUE, ZOO, THOO, TOO
 	} else if p == 42 {
-		ruleCh(pos) // Example: CHEW
+		ruleCh(phonemeState, samConfig, pos) // Example: CHEW
 	} else if p == 44 {
-		ruleJ(pos) // Example: JAY
+		ruleJ(phonemeState, samConfig, pos) // Example: JAY
 	}
 }
 
-func ruleG(pos byte) {
+func ruleG(samConfig *SamConfig, phonemeState *PhonemeState, pos byte) {
 	// G <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> GX <VOWEL OR DIPTHONG NOT ENDING WITH IY>
 	// Example: GO
 
-	index := phonemeindex[pos+1]
+	index := phonemeState.PhonemeIndex[pos+1]
 
 	// If dipthong ending with YX, move continue processing next phoneme
 	if index != 255 && ((flags[index] & FLAG_DIP_YX) == 0) {
 		// replace G with GX and continue processing next phoneme
-		DescribeRule("G <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> GX <VOWEL OR DIPTHONG NOT ENDING WITH IY>")
-		phonemeindex[pos] = 63 // 'GX'
+		DescribeRule(samConfig, "G <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> GX <VOWEL OR DIPTHONG NOT ENDING WITH IY>")
+		phonemeState.PhonemeIndex[pos] = 63 // 'GX'
 	}
 }
 
-func ruleJ(x byte) {
-	DescribeRule("J -> J J+1")
-	insert(x+1, 45, 0, stress[x])
+func ruleJ(phonemeState *PhonemeState, samConfig *SamConfig, x byte) {
+	DescribeRule(samConfig, "J -> J J+1")
+	insert(phonemeState, x+1, 45, 0, phonemeState.Stress[x])
 }
 
 func setInput(input []byte) []byte {
@@ -1638,51 +1652,51 @@ func setMouthThroat(mouth, throat byte) {
 	}
 }
 
-func setPhonemeLength() {
+func setPhonemeLength(phonemeState *PhonemeState) {
 	position := byte(0)
-	for phonemeindex[position] != 255 {
-		a := stress[position]
+	for phonemeState.PhonemeIndex[position] != 255 {
+		a := phonemeState.Stress[position]
 		if a == 0 || (a&128) != 0 {
-			phonemeLength[position] = phonemeLengthTable[phonemeindex[position]]
+			phonemeState.PhonemeLength[position] = phonemeLengthTable[phonemeState.PhonemeIndex[position]]
 		} else {
-			phonemeLength[position] = phonemeStressedLengthTable[phonemeindex[position]]
+			phonemeState.PhonemeLength[position] = phonemeStressedLengthTable[phonemeState.PhonemeIndex[position]]
 		}
 		position++
 	}
 }
 
-func setPitch(pitchSource byte) {
-	pitch = pitchSource
+func setPitch(samConfig *SamConfig, pitchSource byte) {
+	samConfig.Pitch = pitchSource
 }
 
-func setSpeed(speedSource byte) {
-	speed = speedSource
+func setSpeed(samConfig *SamConfig, speedSource byte) {
+	samConfig.Speed = speedSource
 }
 
-func setThroat(_throat byte) {
-	throat = _throat
+func setThroat(samConfig *SamConfig, _throat byte) {
+	samConfig.Throat = _throat
 }
 
-func setMouth(_mouth byte) {
-	mouth = _mouth
+func setMouth(samConfig *SamConfig, _mouth byte) {
+	samConfig.Mouth = _mouth
 }
 
-func write(p, y, value byte) {
+func write(speechData *SpeechData, p, y, value byte) {
 	switch p {
 	case 168:
-		pitches[y] = value
+		speechData.Pitches[y] = value
 	case 169:
-		frequency1[y] = value
+		speechData.Frequency1[y] = value
 	case 170:
-		frequency2[y] = value
+		speechData.Frequency2[y] = value
 	case 171:
-		frequency3[y] = value
+		speechData.Frequency3[y] = value
 	case 172:
-		amplitude1[y] = value
+		speechData.Amplitude1[y] = value
 	case 173:
-		amplitude2[y] = value
+		speechData.Amplitude2[y] = value
 	case 174:
-		amplitude3[y] = value
+		speechData.Amplitude3[y] = value
 	default:
 		panic("Error writing to tables")
 	}
@@ -1724,12 +1738,12 @@ func writeWav(filename string, buffer []byte, bufferLength int) error {
 		return fmt.Errorf("failed to write audio format: %v", err)
 	}
 
-	channels := uint16(1)
+	channels := uint16(SampleChannels)
 	if err := binary.Write(file, binary.LittleEndian, channels); err != nil {
 		return fmt.Errorf("failed to write number of channels: %v", err)
 	}
 
-	sampleRate := uint32(22050)
+	sampleRate := uint32(SampleRate)
 	if err := binary.Write(file, binary.LittleEndian, sampleRate); err != nil {
 		return fmt.Errorf("failed to write sample rate: %v", err)
 	}
@@ -1765,14 +1779,20 @@ func writeWav(filename string, buffer []byte, bufferLength int) error {
 }
 
 func main() {
+	var samState SamState
+	audioState := &samState.Audio
+	inputState := &samState.Input
+	samConfig := &samState.Config
 
-	if err := initAudio(); err != nil {
-		log.Fatalf("Failed to initialize audio: %v", err)
-	}
-
+	/*
+		if err := initAudio(audioState); err != nil {
+			log.Fatalf("Failed to initialize audio: %v", err)
+		}
+	*/
 	var phonetic bool
 	var wavFilename string
-	input = make([]byte, 256)
+
+	inputState.Input = make([]byte, 256)
 
 	if len(os.Args) <= 1 {
 		printUsage()
@@ -1782,7 +1802,7 @@ func main() {
 	i := 1
 	for i < len(os.Args) {
 		if os.Args[i][0] != '-' {
-			stringConcatenateSafe(input, 256, strings.ToUpper(os.Args[i]+" "))
+			stringConcatenateSafe(inputState.Input, 256, strings.ToUpper(os.Args[i]+" "))
 		} else {
 			switch os.Args[i][1:] {
 			case "wav":
@@ -1791,16 +1811,16 @@ func main() {
 					i++
 				}
 			case "sing":
-				enableSingmode()
+				enableSingmode(samConfig)
 			case "phonetic":
 				phonetic = true
 			case "debug":
-				debug = true
+				samConfig.Debug = true
 			case "pitch":
 				if i+1 < len(os.Args) {
 					pitch, err := strconv.Atoi(os.Args[i+1])
 					if err == nil {
-						setPitch(byte(min(pitch, 255)))
+						setPitch(samConfig, byte(min(pitch, 255)))
 					}
 					i++
 				}
@@ -1808,7 +1828,7 @@ func main() {
 				if i+1 < len(os.Args) {
 					speed, err := strconv.Atoi(os.Args[i+1])
 					if err == nil {
-						setSpeed(byte(min(speed, 255)))
+						setSpeed(samConfig, byte(min(speed, 255)))
 					}
 					i++
 				}
@@ -1816,7 +1836,7 @@ func main() {
 				if i+1 < len(os.Args) {
 					mouth, err := strconv.Atoi(os.Args[i+1])
 					if err == nil {
-						setMouth(byte(min(mouth, 255)))
+						setMouth(samConfig, byte(min(mouth, 255)))
 					}
 					i++
 				}
@@ -1824,7 +1844,7 @@ func main() {
 				if i+1 < len(os.Args) {
 					throat, err := strconv.Atoi(os.Args[i+1])
 					if err == nil {
-						setThroat(byte(min(throat, 255)))
+						setThroat(samConfig, byte(min(throat, 255)))
 					}
 					i++
 				}
@@ -1836,28 +1856,28 @@ func main() {
 		i++
 	}
 
-	if debug {
+	if samConfig.Debug {
 		if phonetic {
-			fmt.Printf("phonetic input: %s\n", nullTerminatedBytesToString(input))
+			fmt.Printf("phonetic input: %s\n", nullTerminatedBytesToString(inputState.Input))
 		} else {
-			fmt.Printf("text input: %s\n", nullTerminatedBytesToString(input))
+			fmt.Printf("text input: %s\n", nullTerminatedBytesToString(inputState.Input))
 		}
 	}
 
 	if !phonetic {
-		stringConcatenateSafe(input, 256, "[")
-		if !textToPhonemes(input) {
+		stringConcatenateSafe(inputState.Input, 256, "[")
+		if !textToPhonemes(&samState, inputState.Input) {
 			os.Exit(1)
 		}
-		if debug {
-			fmt.Printf("phonetic input: %s\n", nullTerminatedBytesToString(input))
+		if samConfig.Debug {
+			fmt.Printf("phonetic input: %s\n", nullTerminatedBytesToString(inputState.Input))
 		}
 	} else {
-		stringConcatenateSafe(input, 256, "\x9b")
+		stringConcatenateSafe(inputState.Input, 256, "\x9b")
 	}
 
-	setInput(input)
-	if !samMain() {
+	setInput(inputState.Input)
+	if !samMain(&samState) {
 		printUsage()
 		os.Exit(1)
 	}
@@ -1865,9 +1885,9 @@ func main() {
 	var err error
 
 	if wavFilename != "" {
-		err = writeWav(wavFilename, getBuffer(), getBufferLength()/50)
+		err = writeWav(wavFilename, getBuffer(audioState), getBufferLength(audioState)/50)
 	} else {
-		err = playAudio(getBuffer(), getBufferLength()/50)
+		err = playAudio(audioState, getBuffer(audioState), getBufferLength(audioState)/50)
 
 		if err != nil {
 			log.Fatalf("Failed to output audio: %v", err)
@@ -1888,8 +1908,8 @@ func nullTerminatedBytesToString(b []byte) string {
 	return string(b)
 }
 
-func getBuffer() []byte {
-	return buffer
+func getBuffer(audioState *AudioState) []byte {
+	return audioState.Buffer
 }
 
 // Concatenate a source string to a destination string/buffer while preventing
@@ -1908,46 +1928,81 @@ func stringConcatenateSafe(dest []byte, size int, str string) {
 	dest[destLen+strLen] = 0
 }
 
-func initThings() {
-	setMouthThroat(mouth, throat)
+func initThings(samState *SamState) {
+	phonemeState := &samState.Phonemes
+	speechData := &samState.Speech
+	audioState := &samState.Audio
+	samConfig := &samState.Config
 
-	bufferpos = 0
+	// Initialize various arrays to default values (should be improved!)
+	phonemeState.PhonemeIndex = make([]byte, 256)
+	phonemeState.PhonemeLength = make([]byte, 256)
+	phonemeState.Stress = make([]byte, 256)
+	phonemeState.PhonemeIndexOutput = make([]byte, 60)
+	phonemeState.StressOutput = make([]byte, 60)
+	phonemeState.PhonemeLengthOutput = make([]byte, 60)
+	speechData.Frequency1 = make([]byte, 256)
+	speechData.Frequency2 = make([]byte, 256)
+	speechData.Frequency3 = make([]byte, 256)
+	speechData.Amplitude1 = make([]byte, 256)
+	speechData.Amplitude2 = make([]byte, 256)
+	speechData.Amplitude3 = make([]byte, 256)
+	speechData.SampledConsonantFlag = make([]byte, 256)
+	speechData.Pitches = make([]byte, 256)
+
+	samConfig.Speed = 72
+	samConfig.Pitch = 64
+	samConfig.Mouth = 128
+	samConfig.Throat = 128
+	samConfig.SingMode = false
+	samConfig.Debug = false
+
+	audioState.BufferPos = 0
+	audioState.OldTimeTableIndex = 0
+	audioState.Buffer = make([]byte, SampleRate*10)
+
+	setMouthThroat(samConfig.Mouth, samConfig.Throat)
+
 	// TODO: check for free memory, 10 seconds of output should be more than enough
-	buffer = make([]byte, 22050*10)
+
+	if err := initAudio(audioState); err != nil {
+		log.Fatalf("Failed to initialize audio: %v", err)
+	}
 
 	for i := 0; i < 256; i++ {
-		stress[i] = 0
-		phonemeLength[i] = 0
+		phonemeState.Stress[i] = 0
+		phonemeState.PhonemeLength[i] = 0
 	}
 
 	for i := 0; i < 60; i++ {
-		phonemeIndexOutput[i] = 0
-		stressOutput[i] = 0
-		phonemeLengthOutput[i] = 0
+		phonemeState.PhonemeIndexOutput[i] = 0
+		phonemeState.StressOutput[i] = 0
+		phonemeState.PhonemeLengthOutput[i] = 0
 	}
-	phonemeindex[255] = 255 // to prevent buffer overflow
+	phonemeState.PhonemeIndex[255] = 255 // to prevent buffer overflow
 
 	// ML : changed from 32 to 255 to stop freezing with long inputs
+
 }
 
-func describeRulePost(x byte) {
-	if debug {
+func describeRulePost(samConfig *SamConfig, phonemeState *PhonemeState, x byte) {
+	if samConfig.Debug {
 		fmt.Println("POST")
-		fmt.Printf("phoneme %d (%c%c) length %d\n", x, signInputTable1[phonemeindex[x]],
-			signInputTable2[phonemeindex[x]], phonemeLength[x])
+		fmt.Printf("phoneme %d (%c%c) length %d\n", x, signInputTable1[phonemeState.PhonemeIndex[x]],
+			signInputTable2[phonemeState.PhonemeIndex[x]], phonemeState.PhonemeLength[x])
 	}
 }
 
-func describeRulePre(descr string, x byte) {
-	DescribeRule(descr)
-	if debug {
+func describeRulePre(samConfig *SamConfig, phonemeState *PhonemeState, descr string, x byte) {
+	DescribeRule(samConfig, descr)
+	if samConfig.Debug {
 		fmt.Println("PRE")
 		fmt.Printf(
 			"phoneme %d (%c%c) length %d\n",
 			x,
-			signInputTable1[phonemeindex[x]],
-			signInputTable2[phonemeindex[x]],
-			phonemeLength[x],
+			signInputTable1[phonemeState.PhonemeIndex[x]],
+			signInputTable2[phonemeState.PhonemeIndex[x]],
+			phonemeState.PhonemeLength[x],
 		)
 	}
 }
@@ -1980,9 +2035,10 @@ func printRule(offset uint16) {
 	fmt.Println()
 }
 
-func handleCh(ch, mem byte) int {
-	x = mem
-	tmp := tab36376[inputTemp[mem]]
+func handleCh(samState *SamState, ch, mem byte) int {
+	inputState := &samState.Input
+	samState.X = mem
+	tmp := tab36376[inputState.InputTemp[mem]]
 	if ch == ' ' {
 		if (tmp & 128) != 0 {
 			return 1
@@ -1997,7 +2053,7 @@ func handleCh(ch, mem byte) int {
 		}
 	} else if ch == '&' {
 		if (tmp & 16) == 0 {
-			if inputTemp[mem] != 72 {
+			if inputState.InputTemp[mem] != 72 {
 				return 1
 			}
 			mem++
@@ -2007,7 +2063,7 @@ func handleCh(ch, mem byte) int {
 			return 1
 		}
 	} else if ch == '+' {
-		ch = inputTemp[mem]
+		ch = inputState.InputTemp[mem]
 		if ch != 69 && ch != 73 && ch != 89 {
 			return 1
 		}
