@@ -25,7 +25,7 @@ var (
 
 	bufferpos int = 0
 	buffer    []byte
-	A, x      byte
+	x         byte
 
 	singmode bool = false
 	debug    bool = false
