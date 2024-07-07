@@ -497,10 +497,6 @@ func renderUnvoicedSample(audioState *AudioState, hi uint16, off, mem53 uint8) {
 	}
 }
 
-func getBufferLength(audioState *AudioState) int {
-	return audioState.BufferPos
-}
-
 func handleCh2(samState *SamState, ch byte, mem int, inputTemp []byte) int {
 	samState.X = byte(mem)
 	tmp := tab36376[inputTemp[mem]]
@@ -1093,10 +1089,6 @@ func adjustLengths(phonemeState *PhonemeState, samConfig *SamConfig) {
 	}
 }
 
-func enableSingmode(samConfig *SamConfig) {
-	samConfig.SingMode = true
-}
-
 func insertBreath(phonemeState *PhonemeState) {
 	mem54 := byte(255)
 	len := byte(0)
@@ -1664,22 +1656,6 @@ func setPhonemeLength(phonemeState *PhonemeState) {
 	}
 }
 
-func setPitch(samConfig *SamConfig, pitchSource byte) {
-	samConfig.Pitch = pitchSource
-}
-
-func setSpeed(samConfig *SamConfig, speedSource byte) {
-	samConfig.Speed = speedSource
-}
-
-func setThroat(samConfig *SamConfig, _throat byte) {
-	samConfig.Throat = _throat
-}
-
-func setMouth(samConfig *SamConfig, _mouth byte) {
-	samConfig.Mouth = _mouth
-}
-
 func write(speechData *SpeechData, p, y, value byte) {
 	switch p {
 	case 168:
@@ -1806,7 +1782,7 @@ func main() {
 					i++
 				}
 			case "sing":
-				enableSingmode(samConfig)
+				samConfig.SingMode = true
 			case "phonetic":
 				phonetic = true
 			case "debug":
@@ -1815,7 +1791,7 @@ func main() {
 				if i+1 < len(os.Args) {
 					pitch, err := strconv.Atoi(os.Args[i+1])
 					if err == nil {
-						setPitch(samConfig, byte(min(pitch, 255)))
+						samConfig.Pitch = byte(min(pitch, 255))
 					}
 					i++
 				}
@@ -1823,7 +1799,7 @@ func main() {
 				if i+1 < len(os.Args) {
 					speed, err := strconv.Atoi(os.Args[i+1])
 					if err == nil {
-						setSpeed(samConfig, byte(min(speed, 255)))
+						samConfig.Speed = byte(min(speed, 255))
 					}
 					i++
 				}
@@ -1831,7 +1807,7 @@ func main() {
 				if i+1 < len(os.Args) {
 					mouth, err := strconv.Atoi(os.Args[i+1])
 					if err == nil {
-						setMouth(samConfig, byte(min(mouth, 255)))
+						samConfig.Mouth = byte(min(mouth, 255))
 					}
 					i++
 				}
@@ -1839,7 +1815,7 @@ func main() {
 				if i+1 < len(os.Args) {
 					throat, err := strconv.Atoi(os.Args[i+1])
 					if err == nil {
-						setThroat(samConfig, byte(min(throat, 255)))
+						samConfig.Throat = byte(min(throat, 255))
 					}
 					i++
 				}
@@ -1880,9 +1856,9 @@ func main() {
 	var err error
 
 	if wavFilename != "" {
-		err = writeWav(wavFilename, getBuffer(audioState), getBufferLength(audioState)/50)
+		err = writeWav(wavFilename, audioState.Buffer, audioState.BufferPos/50)
 	} else {
-		err = playAudio(audioState, getBuffer(audioState), getBufferLength(audioState)/50)
+		err = playAudio(audioState, audioState.Buffer, audioState.BufferPos/50)
 
 		if err != nil {
 			log.Fatalf("Failed to output audio: %v", err)
@@ -1901,10 +1877,6 @@ func nullTerminatedBytesToString(b []byte) string {
 		}
 	}
 	return string(b)
-}
-
-func getBuffer(audioState *AudioState) []byte {
-	return audioState.Buffer
 }
 
 // Concatenate a source string to a destination string/buffer while preventing
