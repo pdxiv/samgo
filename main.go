@@ -943,7 +943,7 @@ func copyStress(phonemeState *PhonemeState) {
 	}
 }
 
-func DescribeRule(samConfig *SamConfig, str string) {
+func describeRule(samConfig *SamConfig, str string) {
 	if samConfig.Debug {
 		fmt.Printf("RULE: %s\n", str)
 	}
@@ -1051,7 +1051,7 @@ func adjustLengths(phonemeState *PhonemeState, samConfig *SamConfig) {
 			X = X + 1
 			index = phonemeState.PhonemeIndex[X]
 			if index != END && (flags[index]&FLAG_STOPCONS) != 0 {
-				DescribeRule(samConfig, "<NASAL> <STOP CONSONANT> - set nasal = 5, consonant = 6")
+				describeRule(samConfig, "<NASAL> <STOP CONSONANT> - set nasal = 5, consonant = 6")
 				phonemeState.PhonemeLength[X] = 6   // set stop consonant length to 6
 				phonemeState.PhonemeLength[X-1] = 5 // set nasal length to 5
 			}
@@ -1069,7 +1069,7 @@ func adjustLengths(phonemeState *PhonemeState, samConfig *SamConfig) {
 			if index != END && (flags[index]&FLAG_STOPCONS) != 0 {
 				// FIXME, this looks wrong?
 				// RULE: <UNVOICED STOP CONSONANT> {optional silence} <STOP CONSONANT>
-				DescribeRule(samConfig, "<UNVOICED STOP CONSONANT> {optional silence} <STOP CONSONANT> - shorten both to 1/2 + 1")
+				describeRule(samConfig, "<UNVOICED STOP CONSONANT> {optional silence} <STOP CONSONANT> - shorten both to 1/2 + 1")
 				phonemeState.PhonemeLength[X] = (phonemeState.PhonemeLength[X] >> 1) + 1
 				phonemeState.PhonemeLength[loopIndex] = (phonemeState.PhonemeLength[loopIndex] >> 1) + 1
 				X = loopIndex
@@ -1296,7 +1296,7 @@ func parser2(samConfig *SamConfig, phonemeState *PhonemeState) {
 			if phonemeState.PhonemeIndex[pos+1] == 0 { // If following phoneme is a pause, get next
 				p = phonemeState.PhonemeIndex[pos+2]
 				if p != END && (flags[p]&FLAG_VOWEL) != 0 && phonemeState.Stress[pos+2] != 0 {
-					DescribeRule(samConfig, "Insert glottal stop between two stressed vowels with space between them")
+					describeRule(samConfig, "Insert glottal stop between two stressed vowels with space between them")
 					insert(phonemeState, pos+2, 31, 0, 0) // 31 = 'Q'
 				}
 			}
@@ -1539,13 +1539,13 @@ func printUsage() {
 func ruleAlveolarUw(phonemeState *PhonemeState, samConfig *SamConfig, x byte) {
 	// ALVEOLAR flag set?
 	if (flags[phonemeState.PhonemeIndex[x-1]] & FLAG_ALVEOLAR) != 0 {
-		DescribeRule(samConfig, "<ALVEOLAR> UW -> <ALVEOLAR> UX")
+		describeRule(samConfig, "<ALVEOLAR> UW -> <ALVEOLAR> UX")
 		phonemeState.PhonemeIndex[x] = 16
 	}
 }
 
 func ruleCh(phonemeState *PhonemeState, samConfig *SamConfig, x byte) {
-	DescribeRule(samConfig, "CH -> CH CH+1")
+	describeRule(samConfig, "CH -> CH CH+1")
 	insert(phonemeState, x+1, 43, 0, phonemeState.Stress[x])
 }
 
@@ -1563,9 +1563,9 @@ func ruleDipthong(phonemeState *PhonemeState, samConfig *SamConfig, p byte, pf u
 	}
 	// Insert at WX or YX following, copying the stress
 	if a == 20 {
-		DescribeRule(samConfig, "insert WX following dipthong NOT ending in IY sound")
+		describeRule(samConfig, "insert WX following dipthong NOT ending in IY sound")
 	} else if a == 21 {
-		DescribeRule(samConfig, "insert YX following dipthong ending in IY sound")
+		describeRule(samConfig, "insert YX following dipthong ending in IY sound")
 	}
 	insert(phonemeState, pos+1, a, 0, phonemeState.Stress[pos])
 
@@ -1587,13 +1587,13 @@ func ruleG(samConfig *SamConfig, phonemeState *PhonemeState, pos byte) {
 	// If dipthong ending with YX, move continue processing next phoneme
 	if index != 255 && ((flags[index] & FLAG_DIP_YX) == 0) {
 		// replace G with GX and continue processing next phoneme
-		DescribeRule(samConfig, "G <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> GX <VOWEL OR DIPTHONG NOT ENDING WITH IY>")
+		describeRule(samConfig, "G <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> GX <VOWEL OR DIPTHONG NOT ENDING WITH IY>")
 		phonemeState.PhonemeIndex[pos] = 63 // 'GX'
 	}
 }
 
 func ruleJ(phonemeState *PhonemeState, samConfig *SamConfig, x byte) {
-	DescribeRule(samConfig, "J -> J J+1")
+	describeRule(samConfig, "J -> J J+1")
 	insert(phonemeState, x+1, 45, 0, phonemeState.Stress[x])
 }
 
@@ -1989,7 +1989,7 @@ func describeRulePost(samConfig *SamConfig, phonemeState *PhonemeState, x byte) 
 }
 
 func describeRulePre(samConfig *SamConfig, phonemeState *PhonemeState, descr string, x byte) {
-	DescribeRule(samConfig, descr)
+	describeRule(samConfig, descr)
 	if samConfig.Debug {
 		fmt.Println("PRE")
 		fmt.Printf(
