@@ -453,6 +453,57 @@ func combineGlottalAndFormants(speechData *SpeechData, audioState *AudioState, p
 	output(audioState, 0, uint8(tmp&0xf))
 }
 
+// Render a sampled sound from the sampleTable.
+//
+//	Phoneme   Sample Start   Sample End
+//	32: S*    15             255
+//	33: SH    257            511
+//	34: F*    559            767
+//	35: TH    583            767
+//	36: /H    903            1023
+//	37: /X    1135           1279
+//	38: Z*    84             119
+//	39: ZH    340            375
+//	40: V*    596            639
+//	41: DH    596            631
+//
+//	42: CH
+//	43: **    399            511
+//
+//	44: J*
+//	45: **    257            276
+//	46: **
+//
+//	66: P*
+//	67: **    743            767
+//	68: **
+//
+//	69: T*
+//	70: **    231            255
+//	71: **
+//
+// The SampledPhonemesTable[] holds flags indicating if a phoneme is
+// voiced or not. If the upper 5 bits are zero, the sample is voiced.
+//
+// Samples in the sampleTable are compressed, with bits being converted to
+// bytes from high bit to low, as follows:
+//
+//	unvoiced 0 bit   -> X
+//	unvoiced 1 bit   -> 5
+//
+//	voiced 0 bit     -> 6
+//	voiced 1 bit     -> 24
+//
+// Where X is a value from the table:
+//
+//	{ 0x18, 0x1A, 0x17, 0x17, 0x17 };
+//
+// The index into this table is determined by masking off the lower
+// 3 bits from the SampledPhonemesTable:
+//
+//	index = (SampledPhonemesTable[i] & 7) - 1;
+//
+// For voices samples, samples are interleaved between voiced output.
 func renderSample(speechData *SpeechData, audioState *AudioState, mem66OpenBrace *uint8, consonantFlag, mem49 uint8) {
 	// mask low three bits and subtract 1 to get value to
 	// convert 0 bits on unvoiced samples.
@@ -575,7 +626,6 @@ func handleCh2(samState *SamState, ch byte, mem int, inputTemp []byte) int {
 // The character <0x9B> marks the end of text in input[]. When it is reached,
 // the index 255 is placed at the end of the phonemeIndexTable[], and the
 // function returns with a 1 indicating success.
-
 func parser1(phonemeState *PhonemeState, inputState *InputState) bool {
 	var sign1 byte
 	position := byte(0)
@@ -622,6 +672,128 @@ func parser1(phonemeState *PhonemeState, inputState *InputState) bool {
 
 	phonemeState.PhonemeIndex[position] = END
 	return true
+}
+
+func parser2(samConfig *SamConfig, phonemeState *PhonemeState) {
+	pos := byte(0) // mem66_openBrace
+	var p byte
+
+	if samConfig.Debug {
+		fmt.Println("Parser2")
+	}
+
+	for p = phonemeState.PhonemeIndex[pos]; p != END; p = phonemeState.PhonemeIndex[pos] {
+		var pf uint16
+		var prior byte
+
+		if samConfig.Debug {
+			fmt.Printf("%d: %c%c\n", pos, signInputTable1[p], signInputTable2[p])
+		}
+
+		if p == 0 { // Is phoneme pause?
+			pos = pos + 1
+			continue
+		}
+
+		pf = flags[p]
+		prior = phonemeState.PhonemeIndex[pos-1]
+
+		if (pf & FLAG_DIPTHONG) != 0 {
+			ruleDipthong(phonemeState, samConfig, p, pf, pos)
+		} else if p == 78 {
+			changeRule(phonemeState, samConfig, pos, 24, "UL -> AX L") // Example: MEDDLE
+		} else if p == 79 {
+			changeRule(phonemeState, samConfig, pos, 27, "UM -> AX M") // Example: ASTRONOMY
+		} else if p == 80 {
+			changeRule(phonemeState, samConfig, pos, 28, "UN -> AX N") // Example: FUNCTION
+		} else if (pf&FLAG_VOWEL) != 0 && phonemeState.Stress[pos] != 0 {
+			// RULE:
+			//       <STRESSED VOWEL> <SILENCE> <STRESSED VOWEL> -> <STRESSED VOWEL>
+			//       <SILENCE> Q <VOWEL>
+			// EXAMPLE: AWAY EIGHT
+			if phonemeState.PhonemeIndex[pos+1] == 0 { // If following phoneme is a pause, get next
+				p = phonemeState.PhonemeIndex[pos+2]
+				if p != END && (flags[p]&FLAG_VOWEL) != 0 && phonemeState.Stress[pos+2] != 0 {
+					describeRule(samConfig, "Insert glottal stop between two stressed vowels with space between them")
+					insert(phonemeState, pos+2, 31, 0, 0) // 31 = 'Q'
+				}
+			}
+		} else if p == pR { // RULES FOR PHONEMES BEFORE R
+			if prior == pT {
+				change(phonemeState, samConfig, pos-1, 42, "T R -> CH R") // Example: TRACK
+			} else if prior == pD {
+				change(phonemeState, samConfig, pos-1, 44, "D R -> J R") // Example: DRY
+			} else if (flags[prior] & FLAG_VOWEL) != 0 {
+				change(phonemeState, samConfig, pos, 18, "<VOWEL> R -> <VOWEL> RX") // Example: ART
+			}
+		} else if p == 24 && (flags[prior]&FLAG_VOWEL) != 0 {
+			change(phonemeState, samConfig, pos, 19, "<VOWEL> L -> <VOWEL> LX") // Example: ALL
+		} else if prior == 60 && p == 32 { // 'G' 'S'
+			// Can't get to fire -
+			//       1. The G -> GX rule intervenes
+			//       2. Reciter already replaces GS -> GZ
+			change(phonemeState, samConfig, pos, 38, "G S -> G Z")
+		} else if p == 60 {
+			ruleG(samConfig, phonemeState, pos)
+		} else {
+			if p == 72 { // 'K'
+				// K <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> KX <VOWEL OR DIPTHONG NOT
+				// ENDING WITH IY> Example: COW
+				Y := phonemeState.PhonemeIndex[pos+1]
+				// If at end, replace current phoneme with KX
+				if (flags[Y]&FLAG_DIP_YX) == 0 ||
+					Y == END { // VOWELS AND DIPTHONGS ENDING WITH IY SOUND flag set?
+					change(phonemeState, samConfig, pos, 75, "K <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> KX <VOWEL OR DIPTHONG NOT ENDING WITH IY>")
+					p = 75
+					pf = flags[p]
+				}
+			}
+
+			// Replace with softer version?
+			if (flags[p]&FLAG_PLOSIVE) != 0 && prior == 32 { // 'S'
+				// RULE:
+				//      S P -> S B
+				//      S T -> S D
+				//      S K -> S G
+				//      S KX -> S GX
+				// Examples: SPY, STY, SKY, SCOWL
+
+				if samConfig.Debug {
+					fmt.Printf("RULE: S* %c%c -> S* %c%c\n", signInputTable1[p],
+						signInputTable2[p], signInputTable1[p-12],
+						signInputTable2[p-12])
+				}
+				phonemeState.PhonemeIndex[pos] = p - 12
+			} else if (pf & FLAG_PLOSIVE) == 0 {
+				p = phonemeState.PhonemeIndex[pos]
+				if p == 53 {
+					ruleAlveolarUw(phonemeState, samConfig, pos) // Example: NEW, DEW, SUE, ZOO, THOO, TOO
+				} else if p == 42 {
+					ruleCh(phonemeState, samConfig, pos) // Example: CHEW
+				} else if p == 44 {
+					ruleJ(phonemeState, samConfig, pos) // Example: JAY
+				}
+			}
+
+			if p == 69 || p == 57 { // 'T', 'D'
+				// RULE: Soften T following vowel
+				// NOTE: This rule fails for cases such as "ODD"
+				//       <UNSTRESSED VOWEL> T <PAUSE> -> <UNSTRESSED VOWEL> DX <PAUSE>
+				//       <UNSTRESSED VOWEL> D <PAUSE>  -> <UNSTRESSED VOWEL> DX <PAUSE>
+				// Example: PARTY, TARDY
+				if (flags[phonemeState.PhonemeIndex[pos-1]] & FLAG_VOWEL) != 0 {
+					p = phonemeState.PhonemeIndex[pos+1]
+					if p == 0 {
+						p = phonemeState.PhonemeIndex[pos+2]
+					}
+					if (flags[p]&FLAG_VOWEL) != 0 && phonemeState.Stress[pos+1] == 0 {
+						change(phonemeState, samConfig, pos, 30, "Soften T or D following vowel or ER and preceding a pause -> DX")
+					}
+				}
+			}
+		}
+		pos = pos + 1
+	} // for
 }
 
 func samMain(samState *SamState) bool {
@@ -689,6 +861,13 @@ func min(l, r int) int {
 	return r
 }
 
+// CREATE FRAMES
+//
+// The length parameter in the list corresponds to the number of frames
+// to expand the phoneme to. Each frame represents 10 milliseconds of time.
+// So a phoneme with a length of 7 = 7 frames = 70 milliseconds duration.
+//
+// The parameters are copied from the phoneme to the frame verbatim.
 func createFrames(samState *SamState) {
 	speechData := &samState.Speech
 	phonemeState := &samState.Phonemes
@@ -845,6 +1024,9 @@ func read(speechData *SpeechData, p, y byte) byte {
 	}
 }
 
+// Create a rising or falling inflection 30 frames prior to
+// index X. A rising inflection is used for questions, and
+// a falling inflection is used for statements.
 func addInflection(speechData *SpeechData, inflection, pos byte) {
 	end := pos
 
@@ -876,6 +1058,11 @@ func addInflection(speechData *SpeechData, inflection, pos byte) {
 	}
 }
 
+// ASSIGN PITCH CONTOUR
+//
+// This subtracts the F1 frequency from the pitch to create a
+// pitch contour. Without this, the output would be at a single
+// pitch level (monotone).
 func assignPitchContour(speechData *SpeechData) {
 	for i := 0; i < 256; i++ {
 		speechData.Pitches[i] -= (speechData.Frequency1[i] >> 1)
@@ -945,6 +1132,15 @@ func describeRule(samConfig *SamConfig, str string) {
 	}
 }
 
+// Applies various rules that adjust the lengths of phonemes
+//
+//	Lengthen <FRICATIVE> or <VOICED> between <VOWEL> and <PUNCTUATION>
+//	by 1.5 <VOWEL> <RX | LX> <CONSONANT> - decrease <VOWEL> length by 1
+//	<VOWEL> <UNVOICED PLOSIVE> - decrease vowel by 1/8th
+//	<VOWEL> <UNVOICED CONSONANT> - increase vowel by 1/2 + 1
+//	<NASAL> <STOP CONSONANT> - set nasal = 5, consonant = 6
+//	<VOICED STOP CONSONANT> {optional silence} <STOP CONSONANT> - shorten
+//	both to 1/2 + 1 <LIQUID CONSONANT> <DIPTHONG> - decrease by 2
 func adjustLengths(phonemeState *PhonemeState, samConfig *SamConfig) {
 	// LENGTHEN VOWELS PRECEDING PUNCTUATION
 	{
@@ -1248,129 +1444,15 @@ func printPhonemes(phonemeIndex, phonemeLength, stress []byte) {
 	fmt.Println()
 }
 
-func parser2(samConfig *SamConfig, phonemeState *PhonemeState) {
-	pos := byte(0) // mem66_openBrace
-	var p byte
-
-	if samConfig.Debug {
-		fmt.Println("Parser2")
-	}
-
-	for p = phonemeState.PhonemeIndex[pos]; p != END; p = phonemeState.PhonemeIndex[pos] {
-		var pf uint16
-		var prior byte
-
-		if samConfig.Debug {
-			fmt.Printf("%d: %c%c\n", pos, signInputTable1[p], signInputTable2[p])
-		}
-
-		if p == 0 { // Is phoneme pause?
-			pos = pos + 1
-			continue
-		}
-
-		pf = flags[p]
-		prior = phonemeState.PhonemeIndex[pos-1]
-
-		if (pf & FLAG_DIPTHONG) != 0 {
-			ruleDipthong(phonemeState, samConfig, p, pf, pos)
-		} else if p == 78 {
-			changeRule(phonemeState, samConfig, pos, 24, "UL -> AX L") // Example: MEDDLE
-		} else if p == 79 {
-			changeRule(phonemeState, samConfig, pos, 27, "UM -> AX M") // Example: ASTRONOMY
-		} else if p == 80 {
-			changeRule(phonemeState, samConfig, pos, 28, "UN -> AX N") // Example: FUNCTION
-		} else if (pf&FLAG_VOWEL) != 0 && phonemeState.Stress[pos] != 0 {
-			// RULE:
-			//       <STRESSED VOWEL> <SILENCE> <STRESSED VOWEL> -> <STRESSED VOWEL>
-			//       <SILENCE> Q <VOWEL>
-			// EXAMPLE: AWAY EIGHT
-			if phonemeState.PhonemeIndex[pos+1] == 0 { // If following phoneme is a pause, get next
-				p = phonemeState.PhonemeIndex[pos+2]
-				if p != END && (flags[p]&FLAG_VOWEL) != 0 && phonemeState.Stress[pos+2] != 0 {
-					describeRule(samConfig, "Insert glottal stop between two stressed vowels with space between them")
-					insert(phonemeState, pos+2, 31, 0, 0) // 31 = 'Q'
-				}
-			}
-		} else if p == pR { // RULES FOR PHONEMES BEFORE R
-			if prior == pT {
-				change(phonemeState, samConfig, pos-1, 42, "T R -> CH R") // Example: TRACK
-			} else if prior == pD {
-				change(phonemeState, samConfig, pos-1, 44, "D R -> J R") // Example: DRY
-			} else if (flags[prior] & FLAG_VOWEL) != 0 {
-				change(phonemeState, samConfig, pos, 18, "<VOWEL> R -> <VOWEL> RX") // Example: ART
-			}
-		} else if p == 24 && (flags[prior]&FLAG_VOWEL) != 0 {
-			change(phonemeState, samConfig, pos, 19, "<VOWEL> L -> <VOWEL> LX") // Example: ALL
-		} else if prior == 60 && p == 32 { // 'G' 'S'
-			// Can't get to fire -
-			//       1. The G -> GX rule intervenes
-			//       2. Reciter already replaces GS -> GZ
-			change(phonemeState, samConfig, pos, 38, "G S -> G Z")
-		} else if p == 60 {
-			ruleG(samConfig, phonemeState, pos)
-		} else {
-			if p == 72 { // 'K'
-				// K <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> KX <VOWEL OR DIPTHONG NOT
-				// ENDING WITH IY> Example: COW
-				Y := phonemeState.PhonemeIndex[pos+1]
-				// If at end, replace current phoneme with KX
-				if (flags[Y]&FLAG_DIP_YX) == 0 ||
-					Y == END { // VOWELS AND DIPTHONGS ENDING WITH IY SOUND flag set?
-					change(phonemeState, samConfig, pos, 75, "K <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> KX <VOWEL OR DIPTHONG NOT ENDING WITH IY>")
-					p = 75
-					pf = flags[p]
-				}
-			}
-
-			// Replace with softer version?
-			if (flags[p]&FLAG_PLOSIVE) != 0 && prior == 32 { // 'S'
-				// RULE:
-				//      S P -> S B
-				//      S T -> S D
-				//      S K -> S G
-				//      S KX -> S GX
-				// Examples: SPY, STY, SKY, SCOWL
-
-				if samConfig.Debug {
-					fmt.Printf("RULE: S* %c%c -> S* %c%c\n", signInputTable1[p],
-						signInputTable2[p], signInputTable1[p-12],
-						signInputTable2[p-12])
-				}
-				phonemeState.PhonemeIndex[pos] = p - 12
-			} else if (pf & FLAG_PLOSIVE) == 0 {
-				p = phonemeState.PhonemeIndex[pos]
-				if p == 53 {
-					ruleAlveolarUw(phonemeState, samConfig, pos) // Example: NEW, DEW, SUE, ZOO, THOO, TOO
-				} else if p == 42 {
-					ruleCh(phonemeState, samConfig, pos) // Example: CHEW
-				} else if p == 44 {
-					ruleJ(phonemeState, samConfig, pos) // Example: JAY
-				}
-			}
-
-			if p == 69 || p == 57 { // 'T', 'D'
-				// RULE: Soften T following vowel
-				// NOTE: This rule fails for cases such as "ODD"
-				//       <UNSTRESSED VOWEL> T <PAUSE> -> <UNSTRESSED VOWEL> DX <PAUSE>
-				//       <UNSTRESSED VOWEL> D <PAUSE>  -> <UNSTRESSED VOWEL> DX <PAUSE>
-				// Example: PARTY, TARDY
-				if (flags[phonemeState.PhonemeIndex[pos-1]] & FLAG_VOWEL) != 0 {
-					p = phonemeState.PhonemeIndex[pos+1]
-					if p == 0 {
-						p = phonemeState.PhonemeIndex[pos+2]
-					}
-					if (flags[p]&FLAG_VOWEL) != 0 && phonemeState.Stress[pos+1] == 0 {
-						change(phonemeState, samConfig, pos, 30, "Soften T or D following vowel or ER and preceding a pause -> DX")
-					}
-				}
-			}
-		}
-		pos = pos + 1
-	} // for
-}
-
-func processFrames(speechData *SpeechData, samConfig *SamConfig, audioState *AudioState, mem48 byte) {
+// PROCESS THE FRAMES
+//
+// In traditional vocal synthesis, the glottal pulse drives filters, which
+// are attenuated to the frequencies of the formants.
+//
+// SAM generates these formants directly with sin and rectangular waves.
+// To simulate them being driven by the glottal pulse, the waveforms are
+// reset at the beginning of each glottal pulse.
+func processFrames(speechData *SpeechData, samConfig *SamConfig, audioState *AudioState, remainingFrames byte) {
 	speedcounter := byte(72)
 	phase1 := byte(0)
 	phase2 := byte(0)
@@ -1379,10 +1461,12 @@ func processFrames(speechData *SpeechData, samConfig *SamConfig, audioState *Aud
 
 	y := byte(0)
 
-	glottalPulse := speechData.Pitches[0]
-	mem38 := glottalPulse - (glottalPulse >> 2) // mem44 * 0.75
+	glottalPulseCounter := speechData.Pitches[0]
 
-	for mem48 != 0 {
+	// Represents the remaining samples in the main (open) phase of the glottal cycle.
+	glottalOpenPhaseSamples := glottalPulseCounter - (glottalPulseCounter >> 2) // mem44 * 0.75
+
+	for remainingFrames != 0 {
 		flags := speechData.SampledConsonantFlag[y]
 
 		// unvoiced sampled phoneme?
@@ -1390,7 +1474,7 @@ func processFrames(speechData *SpeechData, samConfig *SamConfig, audioState *Aud
 			renderSample(speechData, audioState, &mem66OpenBrace, flags, y)
 			// skip ahead two in the phoneme buffer
 			y += 2
-			mem48 -= 2
+			remainingFrames -= 2
 			speedcounter = samConfig.Speed
 		} else {
 			combineGlottalAndFormants(speechData, audioState, phase1, phase2, phase3, y)
@@ -1399,21 +1483,21 @@ func processFrames(speechData *SpeechData, samConfig *SamConfig, audioState *Aud
 			if speedcounter == 0 {
 				y++ // go to next amplitude
 				// decrement the frame count
-				mem48--
-				if mem48 == 0 {
+				remainingFrames--
+				if remainingFrames == 0 {
 					return
 				}
 				speedcounter = samConfig.Speed
 			}
 
-			glottalPulse--
+			glottalPulseCounter--
 
-			if glottalPulse != 0 {
+			if glottalPulseCounter != 0 {
 				// not finished with a glottal pulse
-				mem38--
+				glottalOpenPhaseSamples--
 				// within the first 75% of the glottal pulse?
 				// is the count non-zero and the sampled flag is zero?
-				if mem38 != 0 || flags == 0 {
+				if glottalOpenPhaseSamples != 0 || flags == 0 {
 					// reset the phase of the formants to match the pulse
 					phase1 += speechData.Frequency1[y]
 					phase2 += speechData.Frequency2[y]
@@ -1428,8 +1512,8 @@ func processFrames(speechData *SpeechData, samConfig *SamConfig, audioState *Aud
 			}
 		}
 
-		glottalPulse = speechData.Pitches[y]
-		mem38 = glottalPulse - (glottalPulse >> 2) // mem44 * 0.75
+		glottalPulseCounter = speechData.Pitches[y]
+		glottalOpenPhaseSamples = glottalPulseCounter - (glottalPulseCounter >> 2) // mem44 * 0.75
 
 		// reset the formant wave generators to keep them in
 		// sync with the glottal pulse
@@ -1439,8 +1523,20 @@ func processFrames(speechData *SpeechData, samConfig *SamConfig, audioState *Aud
 	}
 }
 
+// RENDER THE PHONEMES IN THE LIST
+//
+// The phoneme list is converted into sound through the steps:
+//
+//  1. Copy each phoneme <length> number of times into the frames list,
+//     where each frame represents 10 milliseconds of sound.
+//
+//  2. Determine the transitions lengths between phonemes, and linearly
+//     interpolate the values across the frames.
+//
+// 3. Offset the pitches by the fundamental frequency.
+//
+// 4. Render the each frame.
 func render(samState *SamState) {
-
 	phonemeState := &samState.Phonemes
 	samConfig := &samState.Config
 	speechData := &samState.Speech
@@ -1528,6 +1624,23 @@ func printUsage() {
 	fmt.Println("Q            kitt-en (glottal stop)    /H        a(h)ead")
 }
 
+// Rewrites the phonemes using the following rules:
+//
+//	<DIPTHONG ENDING WITH WX> -> <DIPTHONG ENDING WITH WX> WX
+//	<DIPTHONG NOT ENDING WITH WX> -> <DIPTHONG NOT ENDING WITH WX> YX
+//	UL -> AX L
+//	UM -> AX M
+//	<STRESSED VOWEL> <SILENCE> <STRESSED VOWEL> -> <STRESSED VOWEL>
+//	<SILENCE> Q <VOWEL> T R -> CH R D R -> J R <VOWEL> R -> <VOWEL> RX
+//	<VOWEL> L -> <VOWEL> LX
+//	G S -> G Z
+//	K <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> KX <VOWEL OR DIPTHONG NOT
+//	ENDING WITH IY> G <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> GX <VOWEL
+//	OR DIPTHONG NOT ENDING WITH IY> S P -> S B S T -> S D S K -> S G S KX
+//	-> S GX <ALVEOLAR> UW -> <ALVEOLAR> UX CH -> CH CH' (CH requires two
+//	phonemes to represent it) J -> J J' (J requires two phonemes to
+//	represent it) <UNSTRESSED VOWEL> T <PAUSE> -> <UNSTRESSED VOWEL> DX
+//	<PAUSE> <UNSTRESSED VOWEL> D <PAUSE>  -> <UNSTRESSED VOWEL> DX <PAUSE>
 func ruleAlveolarUw(phonemeState *PhonemeState, samConfig *SamConfig, x byte) {
 	// ALVEOLAR flag set?
 	if (flags[phonemeState.PhonemeIndex[x-1]] & FLAG_ALVEOLAR) != 0 {
@@ -1539,6 +1652,25 @@ func ruleAlveolarUw(phonemeState *PhonemeState, samConfig *SamConfig, x byte) {
 func ruleCh(phonemeState *PhonemeState, samConfig *SamConfig, x byte) {
 	describeRule(samConfig, "CH -> CH CH+1")
 	insert(phonemeState, x+1, 43, 0, phonemeState.Stress[x])
+}
+
+func ruleJ(phonemeState *PhonemeState, samConfig *SamConfig, x byte) {
+	describeRule(samConfig, "J -> J J+1")
+	insert(phonemeState, x+1, 45, 0, phonemeState.Stress[x])
+}
+
+func ruleG(samConfig *SamConfig, phonemeState *PhonemeState, pos byte) {
+	// G <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> GX <VOWEL OR DIPTHONG NOT ENDING WITH IY>
+	// Example: GO
+
+	index := phonemeState.PhonemeIndex[pos+1]
+
+	// If dipthong ending with YX, move continue processing next phoneme
+	if index != 255 && ((flags[index] & FLAG_DIP_YX) == 0) {
+		// replace G with GX and continue processing next phoneme
+		describeRule(samConfig, "G <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> GX <VOWEL OR DIPTHONG NOT ENDING WITH IY>")
+		phonemeState.PhonemeIndex[pos] = 63 // 'GX'
+	}
 }
 
 func ruleDipthong(phonemeState *PhonemeState, samConfig *SamConfig, p byte, pf uint16, pos byte) {
@@ -1570,25 +1702,6 @@ func ruleDipthong(phonemeState *PhonemeState, samConfig *SamConfig, p byte, pf u
 	}
 }
 
-func ruleG(samConfig *SamConfig, phonemeState *PhonemeState, pos byte) {
-	// G <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> GX <VOWEL OR DIPTHONG NOT ENDING WITH IY>
-	// Example: GO
-
-	index := phonemeState.PhonemeIndex[pos+1]
-
-	// If dipthong ending with YX, move continue processing next phoneme
-	if index != 255 && ((flags[index] & FLAG_DIP_YX) == 0) {
-		// replace G with GX and continue processing next phoneme
-		describeRule(samConfig, "G <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> GX <VOWEL OR DIPTHONG NOT ENDING WITH IY>")
-		phonemeState.PhonemeIndex[pos] = 63 // 'GX'
-	}
-}
-
-func ruleJ(phonemeState *PhonemeState, samConfig *SamConfig, x byte) {
-	describeRule(samConfig, "J -> J J+1")
-	insert(phonemeState, x+1, 45, 0, phonemeState.Stress[x])
-}
-
 func setInput(input []byte) []byte {
 	result := make([]byte, 256)
 	result[0] = ' '
@@ -1606,6 +1719,9 @@ func setInput(input []byte) []byte {
 	return result
 }
 
+// SAM's voice can be altered by changing the frequencies of the
+// mouth formant (F1) and the throat formant (F2). Only the voiced
+// phonemes (5-29 and 48-53) are altered.
 func setMouthThroat(mouth, throat byte) {
 	mouthFormants5_29 := []byte{
 		0, 0, 0, 0, 0, 10, 14, 19, 24, 27, 23, 21, 16, 20, 14,
@@ -1643,6 +1759,7 @@ func setMouthThroat(mouth, throat byte) {
 	}
 }
 
+// change phonemelength depedendent on stress
 func setPhonemeLength(phonemeState *PhonemeState) {
 	position := byte(0)
 	for phonemeState.PhonemeIndex[position] != 255 {
