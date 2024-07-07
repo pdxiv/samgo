@@ -1463,8 +1463,8 @@ func processFrames(speechData *SpeechData, samConfig *SamConfig, audioState *Aud
 
 	glottalPulseCounter := speechData.Pitches[0]
 
-	// Represents the remaining samples in the main (open) phase of the glottal cycle.
-	glottalOpenPhaseSamples := glottalPulseCounter - (glottalPulseCounter >> 2) // mem44 * 0.75
+	// Represents the remaining samples in the main (open) phase of the glottal cycle (75% pulse).
+	glottalOpenPhaseSamples := glottalPulseCounter - (glottalPulseCounter >> 2) // glottalPulseCounter * 0.75
 
 	for remainingFrames != 0 {
 		flags := speechData.SampledConsonantFlag[y]
@@ -1513,7 +1513,7 @@ func processFrames(speechData *SpeechData, samConfig *SamConfig, audioState *Aud
 		}
 
 		glottalPulseCounter = speechData.Pitches[y]
-		glottalOpenPhaseSamples = glottalPulseCounter - (glottalPulseCounter >> 2) // mem44 * 0.75
+		glottalOpenPhaseSamples = glottalPulseCounter - (glottalPulseCounter >> 2) // glottalPulseCounter * 0.75
 
 		// reset the formant wave generators to keep them in
 		// sync with the glottal pulse
