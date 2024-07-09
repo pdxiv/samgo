@@ -436,7 +436,6 @@ func renderVoicedSample(audioState *AudioState, hi uint16, off uint8, phase1 uin
 
 func combineGlottalAndFormants(speechData *SpeechData, audioState *AudioState, phase1, phase2, phase3, Y uint8) {
 	var tmp uint32
-
 	tmp = uint32(multtable[sinus[phase1]|speechData.Amplitude1[Y]])
 	tmp += uint32(multtable[sinus[phase2]|speechData.Amplitude2[Y]])
 
@@ -683,7 +682,7 @@ func parser2(samConfig *SamConfig, phonemeState *PhonemeState) {
 	}
 
 	for p = phonemeState.PhonemeIndex[pos]; p != END; p = phonemeState.PhonemeIndex[pos] {
-		var pf uint16
+		var pf PhonemeFlag
 		var prior byte
 
 		if samConfig.Debug {
@@ -695,10 +694,10 @@ func parser2(samConfig *SamConfig, phonemeState *PhonemeState) {
 			continue
 		}
 
-		pf = flags[p]
+		pf = phonemeFlag[p]
 		prior = phonemeState.PhonemeIndex[pos-1]
 
-		if (pf & FLAG_DIPTHONG) != 0 {
+		if pf.Diphthong {
 			ruleDipthong(phonemeState, samConfig, p, pf, pos)
 		} else if p == 78 {
 			changeRule(phonemeState, samConfig, pos, 24, "UL -> AX L") // Example: MEDDLE
@@ -706,14 +705,14 @@ func parser2(samConfig *SamConfig, phonemeState *PhonemeState) {
 			changeRule(phonemeState, samConfig, pos, 27, "UM -> AX M") // Example: ASTRONOMY
 		} else if p == 80 {
 			changeRule(phonemeState, samConfig, pos, 28, "UN -> AX N") // Example: FUNCTION
-		} else if (pf&FLAG_VOWEL) != 0 && phonemeState.Stress[pos] != 0 {
+		} else if pf.Vowel && phonemeState.Stress[pos] != 0 {
 			// RULE:
 			//       <STRESSED VOWEL> <SILENCE> <STRESSED VOWEL> -> <STRESSED VOWEL>
 			//       <SILENCE> Q <VOWEL>
 			// EXAMPLE: AWAY EIGHT
 			if phonemeState.PhonemeIndex[pos+1] == 0 { // If following phoneme is a pause, get next
 				p = phonemeState.PhonemeIndex[pos+2]
-				if p != END && (flags[p]&FLAG_VOWEL) != 0 && phonemeState.Stress[pos+2] != 0 {
+				if p != END && phonemeFlag[p].Vowel && phonemeState.Stress[pos+2] != 0 {
 					describeRule(samConfig, "Insert glottal stop between two stressed vowels with space between them")
 					insert(phonemeState, pos+2, 31, 0, 0) // 31 = 'Q'
 				}
@@ -723,10 +722,10 @@ func parser2(samConfig *SamConfig, phonemeState *PhonemeState) {
 				change(phonemeState, samConfig, pos-1, 42, "T R -> CH R") // Example: TRACK
 			} else if prior == pD {
 				change(phonemeState, samConfig, pos-1, 44, "D R -> J R") // Example: DRY
-			} else if (flags[prior] & FLAG_VOWEL) != 0 {
+			} else if phonemeFlag[prior].Vowel {
 				change(phonemeState, samConfig, pos, 18, "<VOWEL> R -> <VOWEL> RX") // Example: ART
 			}
-		} else if p == 24 && (flags[prior]&FLAG_VOWEL) != 0 {
+		} else if p == 24 && phonemeFlag[prior].Vowel {
 			change(phonemeState, samConfig, pos, 19, "<VOWEL> L -> <VOWEL> LX") // Example: ALL
 		} else if prior == 60 && p == 32 { // 'G' 'S'
 			// Can't get to fire -
@@ -741,16 +740,15 @@ func parser2(samConfig *SamConfig, phonemeState *PhonemeState) {
 				// ENDING WITH IY> Example: COW
 				Y := phonemeState.PhonemeIndex[pos+1]
 				// If at end, replace current phoneme with KX
-				if (flags[Y]&FLAG_DIP_YX) == 0 ||
-					Y == END { // VOWELS AND DIPTHONGS ENDING WITH IY SOUND flag set?
+				if !phonemeFlag[Y].DipYX || Y == END { // VOWELS AND DIPTHONGS ENDING WITH IY SOUND flag set?
 					change(phonemeState, samConfig, pos, 75, "K <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> KX <VOWEL OR DIPTHONG NOT ENDING WITH IY>")
 					p = 75
-					pf = flags[p]
+					pf = phonemeFlag[p]
 				}
 			}
 
 			// Replace with softer version?
-			if (flags[p]&FLAG_PLOSIVE) != 0 && prior == 32 { // 'S'
+			if phonemeFlag[p].Plosive && prior == 32 { // 'S'
 				// RULE:
 				//      S P -> S B
 				//      S T -> S D
@@ -764,7 +762,7 @@ func parser2(samConfig *SamConfig, phonemeState *PhonemeState) {
 						signInputTable2[p-12])
 				}
 				phonemeState.PhonemeIndex[pos] = p - 12
-			} else if (pf & FLAG_PLOSIVE) == 0 {
+			} else if !pf.Plosive {
 				p = phonemeState.PhonemeIndex[pos]
 				if p == 53 {
 					ruleAlveolarUw(phonemeState, samConfig, pos) // Example: NEW, DEW, SUE, ZOO, THOO, TOO
@@ -781,12 +779,12 @@ func parser2(samConfig *SamConfig, phonemeState *PhonemeState) {
 				//       <UNSTRESSED VOWEL> T <PAUSE> -> <UNSTRESSED VOWEL> DX <PAUSE>
 				//       <UNSTRESSED VOWEL> D <PAUSE>  -> <UNSTRESSED VOWEL> DX <PAUSE>
 				// Example: PARTY, TARDY
-				if (flags[phonemeState.PhonemeIndex[pos-1]] & FLAG_VOWEL) != 0 {
+				if phonemeFlag[phonemeState.PhonemeIndex[pos-1]].Vowel {
 					p = phonemeState.PhonemeIndex[pos+1]
 					if p == 0 {
 						p = phonemeState.PhonemeIndex[pos+2]
 					}
-					if (flags[p]&FLAG_VOWEL) != 0 && phonemeState.Stress[pos+1] == 0 {
+					if phonemeFlag[p].Vowel && phonemeState.Stress[pos+1] == 0 {
 						change(phonemeState, samConfig, pos, 30, "Soften T or D following vowel or ER and preceding a pause -> DX")
 					}
 				}
@@ -1088,15 +1086,15 @@ func code41240(phonemeState *PhonemeState) {
 	pos := byte(0)
 	for phonemeState.PhonemeIndex[pos] != 255 { // 255 == END
 		index := phonemeState.PhonemeIndex[pos]
-		if (flags[index] & FLAG_STOPCONS) != 0 {
-			if (flags[index] & FLAG_PLOSIVE) != 0 {
+		if phonemeFlag[index].Stopcons {
+			if phonemeFlag[index].Plosive {
 				x := pos
 				for phonemeState.PhonemeIndex[x+1] == 0 {
 					x++ // Skip pause
 				}
 				a := phonemeState.PhonemeIndex[x+1]
 				if a != 255 { // END
-					if (flags[a]&8) != 0 || a == 36 || a == 37 {
+					if phonemeFlag[a].Unknown1 || a == 36 || a == 37 {
 						pos++
 						continue
 					}
@@ -1113,9 +1111,9 @@ func code41240(phonemeState *PhonemeState) {
 func copyStress(phonemeState *PhonemeState) {
 	pos := byte(0)
 	for phonemeState.PhonemeIndex[pos] != 255 { // 255 == END
-		if (flags[phonemeState.PhonemeIndex[pos]] & 64) != 0 {
+		if phonemeFlag[phonemeState.PhonemeIndex[pos]].Consonant {
 			y := phonemeState.PhonemeIndex[pos+1]
-			if y != 255 && (flags[y]&128) != 0 {
+			if y != 255 && phonemeFlag[y].Vowel {
 				y = phonemeState.Stress[pos+1]
 				if y != 0 && (y&128) == 0 {
 					phonemeState.Stress[pos] = y + 1
@@ -1151,7 +1149,7 @@ func adjustLengths(phonemeState *PhonemeState, samConfig *SamConfig) {
 			var loopIndex byte
 
 			// not punctuation?
-			if (flags[index] & FLAG_PUNCT) == 0 {
+			if !phonemeFlag[index].Punct {
 				X = X + 1
 				continue
 			}
@@ -1161,7 +1159,7 @@ func adjustLengths(phonemeState *PhonemeState, samConfig *SamConfig) {
 			// Back up to the first vowel
 			for X > 0 {
 				X = X - 1 // Decrement X
-				if (flags[phonemeState.PhonemeIndex[X]] & FLAG_VOWEL) != 0 {
+				if phonemeFlag[phonemeState.PhonemeIndex[X]].Vowel {
 					break // Exit the loop if a vowel is found
 				}
 			}
@@ -1175,7 +1173,7 @@ func adjustLengths(phonemeState *PhonemeState, samConfig *SamConfig) {
 				index = phonemeState.PhonemeIndex[X]
 
 				// test for fricative/unvoiced or not voiced
-				if (flags[index]&FLAG_FRICATIVE) == 0 || (flags[index]&FLAG_VOICED) != 0 { // nochmal überprüfen
+				if !phonemeFlag[index].Fricative || phonemeFlag[index].Voiced { // nochmal überprüfen
 					A := phonemeState.PhonemeLength[X]
 					// change phoneme length to (length * 1.5) + 1
 					describeRulePre(samConfig, phonemeState, "Lengthen <FRICATIVE> or <VOICED> between <VOWEL> and <PUNCTUATION> by 1.5", X)
@@ -1200,28 +1198,28 @@ func adjustLengths(phonemeState *PhonemeState, samConfig *SamConfig) {
 	for index = phonemeState.PhonemeIndex[loopIndex]; index != END; index = phonemeState.PhonemeIndex[loopIndex] {
 		X := loopIndex
 
-		if (flags[index] & FLAG_VOWEL) != 0 {
+		if phonemeFlag[index].Vowel {
 			index = phonemeState.PhonemeIndex[loopIndex+1]
-			if (flags[index] & FLAG_CONSONANT) == 0 {
+			if !phonemeFlag[index].Consonant {
 				if index == 18 || index == 19 { // 'RX', 'LX'
 					index = phonemeState.PhonemeIndex[loopIndex+2]
-					if (flags[index] & FLAG_CONSONANT) != 0 {
+					if phonemeFlag[index].Consonant {
 						describeRulePre(samConfig, phonemeState, "<VOWEL> <RX | LX> <CONSONANT> - decrease length of vowel by 1\n", loopIndex)
 						phonemeState.PhonemeLength[loopIndex] = phonemeState.PhonemeLength[loopIndex] - 1
 						describeRulePost(samConfig, phonemeState, loopIndex)
 					}
 				}
 			} else { // Got here if not <VOWEL>
-				var flag uint16
+				var flag PhonemeFlag
 				if index == END {
-					flag = 65
+					flag = PhonemeFlag{Plosive: true, Consonant: true}
 				} else {
-					flag = flags[index]
+					flag = phonemeFlag[index]
 				}
 
-				if (flag & FLAG_VOICED) == 0 { // Unvoiced
+				if !flag.Voiced { // Unvoiced
 					// *, .*, ?*, ,*, -*, DX, S*, SH, F*, TH, /H, /X, CH, P*, T*, K*, KX
-					if (flag & FLAG_PLOSIVE) != 0 { // unvoiced plosive
+					if flag.Plosive { // unvoiced plosive
 						// RULE: <VOWEL> <UNVOICED PLOSIVE>
 						// <VOWEL> <P*, T*, K*, KX>
 						describeRulePre(samConfig, phonemeState, "<VOWEL> <UNVOICED PLOSIVE> - decrease vowel by 1/8th", loopIndex)
@@ -1236,18 +1234,18 @@ func adjustLengths(phonemeState *PhonemeState, samConfig *SamConfig) {
 					describeRulePost(samConfig, phonemeState, loopIndex)
 				}
 			}
-		} else if (flags[index] & FLAG_NASAL) != 0 { // nasal?
+		} else if phonemeFlag[index].Nasal { // nasal?
 			// RULE: <NASAL> <STOP CONSONANT>
 			//       Set punctuation length to 6
 			//       Set stop consonant length to 5
 			X = X + 1
 			index = phonemeState.PhonemeIndex[X]
-			if index != END && (flags[index]&FLAG_STOPCONS) != 0 {
+			if index != END && phonemeFlag[index].Stopcons {
 				describeRule(samConfig, "<NASAL> <STOP CONSONANT> - set nasal = 5, consonant = 6")
 				phonemeState.PhonemeLength[X] = 6   // set stop consonant length to 6
 				phonemeState.PhonemeLength[X-1] = 5 // set nasal length to 5
 			}
-		} else if (flags[index] & FLAG_STOPCONS) != 0 { // (voiced) stop consonant?
+		} else if phonemeFlag[index].Stopcons { // (voiced) stop consonant?
 			// RULE: <VOICED STOP CONSONANT> {optional silence} <STOP CONSONANT>
 			//       Shorten both to (length/2 + 1)
 
@@ -1258,7 +1256,7 @@ func adjustLengths(phonemeState *PhonemeState, samConfig *SamConfig) {
 			}
 			index = phonemeState.PhonemeIndex[X]
 
-			if index != END && (flags[index]&FLAG_STOPCONS) != 0 {
+			if index != END && phonemeFlag[index].Stopcons {
 				// FIXME, this looks wrong?
 				// RULE: <UNVOICED STOP CONSONANT> {optional silence} <STOP CONSONANT>
 				describeRule(samConfig, "<UNVOICED STOP CONSONANT> {optional silence} <STOP CONSONANT> - shorten both to 1/2 + 1")
@@ -1266,14 +1264,14 @@ func adjustLengths(phonemeState *PhonemeState, samConfig *SamConfig) {
 				phonemeState.PhonemeLength[loopIndex] = (phonemeState.PhonemeLength[loopIndex] >> 1) + 1
 				X = loopIndex
 			}
-		} else if (flags[index] & FLAG_LIQUIC) != 0 { // liquic consonant?
+		} else if phonemeFlag[index].Liquic { // liquic consonant?
 			// RULE: <VOICED NON-VOWEL> <DIPTHONG>
 			//       Decrease <DIPTHONG> by 2
 			index = phonemeState.PhonemeIndex[X-1] // prior phoneme;
 
 			// FIXME: The debug code here breaks the rule.
 			// prior phoneme a stop consonant>
-			if (flags[index] & FLAG_STOPCONS) != 0 {
+			if phonemeFlag[index].Stopcons {
 				describeRulePre(samConfig, phonemeState, "<LIQUID CONSONANT> <DIPTHONG> - decrease by 2", X)
 			}
 
@@ -1300,7 +1298,7 @@ func insertBreath(phonemeState *PhonemeState) {
 		if len < 232 {
 			if index == BREAK {
 				// Do nothing
-			} else if (flags[index] & FLAG_PUNCT) == 0 {
+			} else if !phonemeFlag[index].Punct {
 				if index == 0 {
 					mem54 = pos
 				}
@@ -1643,7 +1641,8 @@ func printUsage() {
 //	<PAUSE> <UNSTRESSED VOWEL> D <PAUSE>  -> <UNSTRESSED VOWEL> DX <PAUSE>
 func ruleAlveolarUw(phonemeState *PhonemeState, samConfig *SamConfig, x byte) {
 	// ALVEOLAR flag set?
-	if (flags[phonemeState.PhonemeIndex[x-1]] & FLAG_ALVEOLAR) != 0 {
+	// if (flags[phonemeState.PhonemeIndex[x-1]] & FLAG_ALVEOLAR) != 0 {
+	if phonemeFlag[phonemeState.PhonemeIndex[x-1]].Alveolar {
 		describeRule(samConfig, "<ALVEOLAR> UW -> <ALVEOLAR> UX")
 		phonemeState.PhonemeIndex[x] = 16
 	}
@@ -1666,21 +1665,22 @@ func ruleG(samConfig *SamConfig, phonemeState *PhonemeState, pos byte) {
 	index := phonemeState.PhonemeIndex[pos+1]
 
 	// If dipthong ending with YX, move continue processing next phoneme
-	if index != 255 && ((flags[index] & FLAG_DIP_YX) == 0) {
+	if index != 255 && !phonemeFlag[index].DipYX {
+
 		// replace G with GX and continue processing next phoneme
 		describeRule(samConfig, "G <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> GX <VOWEL OR DIPTHONG NOT ENDING WITH IY>")
 		phonemeState.PhonemeIndex[pos] = 63 // 'GX'
 	}
 }
 
-func ruleDipthong(phonemeState *PhonemeState, samConfig *SamConfig, p byte, pf uint16, pos byte) {
+func ruleDipthong(phonemeState *PhonemeState, samConfig *SamConfig, p byte, pf PhonemeFlag, pos byte) {
 	// <DIPTHONG ENDING WITH WX> -> <DIPTHONG ENDING WITH WX> WX
 	// <DIPTHONG NOT ENDING WITH WX> -> <DIPTHONG NOT ENDING WITH WX> YX
 	// Example: OIL, COW
 
 	// If ends with IY, use YX, else use WX
 	var a byte
-	if (pf & FLAG_DIP_YX) != 0 {
+	if pf.DipYX {
 		a = 21
 	} else {
 		a = 20

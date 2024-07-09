@@ -1064,18 +1064,6 @@ var signInputTable2 = []byte{
 	'*', '*', '*', '*', '*', 'X', '*', '*', 'L', 'M', 'N'}
 
 const (
-	FLAG_PLOSIVE       = 0x0001
-	FLAG_STOPCONS      = 0x0002 // stop consonant
-	FLAG_VOICED        = 0x0004 // 0x08
-	FLAG_DIPTHONG      = 0x0010
-	FLAG_DIP_YX        = 0x0020 // dipthong ending with YX
-	FLAG_CONSONANT     = 0x0040
-	FLAG_VOWEL         = 0x0080
-	FLAG_PUNCT         = 0x0100 // 0x200
-	FLAG_ALVEOLAR      = 0x0400
-	FLAG_NASAL         = 0x0800
-	FLAG_LIQUIC        = 0x1000 // liquic consonant
-	FLAG_FRICATIVE     = 0x2000
 	END                = 255
 	BREAK              = 254
 	pR                 = 23
@@ -1086,17 +1074,6 @@ const (
 	PHONEME_QUESTION   = 0x2
 	FALLING_INFLECTION = 0x2
 )
-
-var flags = []uint16{
-	0x8000, 0xC100, 0xC100, 0xC100, 0xC100, 0x00A4, 0x00A4, 0x00A4, 0x00A4,
-	0x00A4, 0x00A4, 0x0084, 0x0084, 0x00A4, 0x00A4, 0x0084, 0x0084, 0x0084,
-	0x0084, 0x0084, 0x0084, 0x0084, 0x0044, 0x1044, 0x1044, 0x1044, 0x1044,
-	0x084C, 0x0C4C, 0x084C, 0x0448, 0x404C, 0x2440, 0x2040, 0x2040, 0x2440,
-	0x0040, 0x0040, 0x2444, 0x2044, 0x2044, 0x2444, 0x2048, 0x2040, 0x004C,
-	0x2044, 0x0000, 0x0000, 0x00B4, 0x00B4, 0x00B4, 0x0094, 0x0094, 0x0094,
-	0x004E, 0x004E, 0x004E, 0x044E, 0x044E, 0x044E, 0x004E, 0x004E, 0x004E,
-	0x004E, 0x004E, 0x004E, 0x004B, 0x004B, 0x004B, 0x044B, 0x044B, 0x044B,
-	0x004B, 0x004B, 0x004B, 0x004B, 0x004B, 0x004B, 0x0080, 0x00C1, 0x00C1}
 
 // tab45616???
 var phonemeStressedLengthTable = []byte{
@@ -1224,3 +1201,106 @@ SPECIAL
 31   |  Q*     | 01001100 |
 
 */
+
+type PhonemeFlag struct {
+	Plosive   bool // 0x0001 'P*', '**', '**', 'T*', '**', '**', 'K*', '**', '**', 'KX', '**', '**', 'UM', 'UN'
+	Stopcons  bool // 0x0002 'B*', '**', '**', 'D*', '**', '**', 'G*', '**', '**', 'GX', '**', '**', 'P*', '**', '**', 'T*', '**', '**', 'K*', '**', '**', 'KX', '**', '**'
+	Voiced    bool // 0x0004 'IY', 'IH', 'EH', 'AE', 'AA', 'AH', 'AO', 'UH', 'AX', 'IX', 'ER', 'UX', 'OH', 'RX', 'LX', 'WX', 'YX', 'WH', 'R*', 'L*', 'W*', 'Y*', 'M*', 'N*', 'NX', 'Q*', 'Z*', 'ZH', 'V*', 'DH', 'J*', '**', 'EY', 'AY', 'OY', 'AW', 'OW', 'UW', 'B*', '**', '**', 'D*', '**', '**', 'G*', '**', '**', 'GX', '**', '**'
+	Unknown1  bool // 0x0008 'M*', 'N*', 'NX', 'DX', 'Q*', 'CH', 'J*', 'B*', '**', '**', 'D*', '**', '**', 'G*', '**', '**', 'GX', '**', '**', 'P*', '**', '**', 'T*', '**', '**', 'K*', '**', '**', 'KX', '**', '**'
+	Diphthong bool // 0x0010 'EY', 'AY', 'OY', 'AW', 'OW', 'UW'
+	DipYX     bool // 0x0020 'IY', 'IH', 'EH', 'AE', 'AA', 'AH', 'AX', 'IX', 'EY', 'AY', 'OY'
+	Consonant bool // 0x0040 'WH', 'R*', 'L*', 'W*', 'Y*', 'M*', 'N*', 'NX', 'DX', 'Q*', 'S*', 'SH', 'F*', 'TH', '/H', '/X', 'Z*', 'ZH', 'V*', 'DH', 'CH', '**', 'J*', '**', 'B*', '**', '**', 'D*', '**', '**', 'G*', '**', '**', 'GX', '**', '**', 'P*', '**', '**', 'T*', '**', '**', 'K*', '**', '**', 'KX', '**', '**', 'UM', 'UN'
+	Vowel     bool // 0x0080 'IY', 'IH', 'EH', 'AE', 'AA', 'AH', 'AO', 'UH', 'AX', 'IX', 'ER', 'UX', 'OH', 'RX', 'LX', 'WX', 'YX', 'EY', 'AY', 'OY', 'AW', 'OW', 'UW', 'UL', 'UM', 'UN'
+	Punct     bool // 0x0100 '.*', '?*', ',*', '-*'
+	Unknown2  bool // 0x0200
+	Alveolar  bool // 0x0400 'N*', 'DX', 'S*', 'TH', 'Z*', 'DH', 'D*', '**', '**', 'T*', '**', '**'
+	Nasal     bool // 0x0800 'M*', 'N*', 'NX'
+	Liquic    bool // 0x1000 'R*', 'L*', 'W*', 'Y*'
+	Fricative bool // 0x2000 'S*', 'SH', 'F*', 'TH', 'Z*', 'ZH', 'V*', 'DH', 'CH', '**', '**'
+	Unknown3  bool // 0x4000 '.*', '?*', ',*', '-*', 'Q*'
+	Unknown4  bool // 0x8000 ' *', '.*', '?*', ',*', '-*'
+}
+
+var phonemeFlag = []PhonemeFlag{
+	{Unknown4: true}, // ' *' 00
+	{Unknown4: true, Unknown3: true, Punct: true},                                // '.*' 01
+	{Unknown4: true, Unknown3: true, Punct: true},                                // '?*' 02
+	{Unknown4: true, Unknown3: true, Punct: true},                                // '},*' 03
+	{Unknown4: true, Unknown3: true, Punct: true},                                // '-*' 04
+	{Vowel: true, DipYX: true, Voiced: true},                                     // 'IY' 05
+	{Vowel: true, DipYX: true, Voiced: true},                                     // 'IH' 06
+	{Vowel: true, DipYX: true, Voiced: true},                                     // 'EH' 07
+	{Vowel: true, DipYX: true, Voiced: true},                                     // 'AE' 08
+	{Vowel: true, DipYX: true, Voiced: true},                                     // 'AA' 09
+	{Vowel: true, DipYX: true, Voiced: true},                                     // 'AH' 10
+	{Vowel: true, Voiced: true},                                                  // 'AO' 11
+	{Vowel: true, Voiced: true},                                                  // 'UH' 12
+	{Vowel: true, DipYX: true, Voiced: true},                                     // 'AX' 13
+	{Vowel: true, DipYX: true, Voiced: true},                                     // 'IX' 14
+	{Vowel: true, Voiced: true},                                                  // 'ER' 15
+	{Vowel: true, Voiced: true},                                                  // 'UX' 16
+	{Vowel: true, Voiced: true},                                                  // 'OH' 17
+	{Vowel: true, Voiced: true},                                                  // 'RX' 18
+	{Vowel: true, Voiced: true},                                                  // 'LX' 19
+	{Vowel: true, Voiced: true},                                                  // 'WX' 20
+	{Vowel: true, Voiced: true},                                                  // 'YX' 21
+	{Consonant: true, Voiced: true},                                              // 'WH' 22
+	{Liquic: true, Consonant: true, Voiced: true},                                // 'R*' 23
+	{Liquic: true, Consonant: true, Voiced: true},                                // 'L*' 24
+	{Liquic: true, Consonant: true, Voiced: true},                                // 'W*' 25
+	{Liquic: true, Consonant: true, Voiced: true},                                // 'Y*' 26
+	{Nasal: true, Consonant: true, Unknown1: true, Voiced: true},                 // 'M*' 27
+	{Nasal: true, Alveolar: true, Consonant: true, Unknown1: true, Voiced: true}, // 'N*' 28
+	{Nasal: true, Consonant: true, Unknown1: true, Voiced: true},                 // 'NX' 29
+	{Alveolar: true, Consonant: true, Unknown1: true},                            // 'DX' 30
+	{Unknown3: true, Consonant: true, Unknown1: true, Voiced: true},              // 'Q*' 31
+	{Fricative: true, Alveolar: true, Consonant: true},                           // 'S*' 32
+	{Fricative: true, Consonant: true},                                           // 'SH' 33
+	{Fricative: true, Consonant: true},                                           // 'F*' 34
+	{Fricative: true, Alveolar: true, Consonant: true},                           // 'TH' 35
+	{Consonant: true},                                                            // '/H' 36
+	{Consonant: true},                                                            // '/X' 37
+	{Fricative: true, Alveolar: true, Consonant: true, Voiced: true},             // 'Z*' 38
+	{Fricative: true, Consonant: true, Voiced: true},                             // 'ZH' 39
+	{Fricative: true, Consonant: true, Voiced: true},                             // 'V*' 40
+	{Fricative: true, Alveolar: true, Consonant: true, Voiced: true},             // 'DH' 41
+	{Fricative: true, Consonant: true, Unknown1: true},                           // 'CH' 42
+	{Fricative: true, Consonant: true},                                           // '**' 43
+	{Consonant: true, Unknown1: true, Voiced: true},                              // 'J*' 44
+	{Fricative: true, Consonant: true, Voiced: true},                             // '**' 45
+	{}, // '**' 46
+	{}, // '**' 47
+	{Vowel: true, DipYX: true, Diphthong: true, Voiced: true},                        // 'EY' 48
+	{Vowel: true, DipYX: true, Diphthong: true, Voiced: true},                        // 'AY' 49
+	{Vowel: true, DipYX: true, Diphthong: true, Voiced: true},                        // 'OY' 50
+	{Vowel: true, Diphthong: true, Voiced: true},                                     // 'AW' 51
+	{Vowel: true, Diphthong: true, Voiced: true},                                     // 'OW' 52
+	{Vowel: true, Diphthong: true, Voiced: true},                                     // 'UW' 53
+	{Consonant: true, Unknown1: true, Voiced: true, Stopcons: true},                  // 'B*' 54
+	{Consonant: true, Unknown1: true, Voiced: true, Stopcons: true},                  // '**' 55
+	{Consonant: true, Unknown1: true, Voiced: true, Stopcons: true},                  // '**' 56
+	{Alveolar: true, Consonant: true, Unknown1: true, Voiced: true, Stopcons: true},  // 'D*' 57
+	{Alveolar: true, Consonant: true, Unknown1: true, Voiced: true, Stopcons: true},  // '**' 58
+	{Alveolar: true, Consonant: true, Unknown1: true, Voiced: true, Stopcons: true},  // '**' 59
+	{Consonant: true, Unknown1: true, Voiced: true, Stopcons: true},                  // 'G*' 60
+	{Consonant: true, Unknown1: true, Voiced: true, Stopcons: true},                  // '**' 61
+	{Consonant: true, Unknown1: true, Voiced: true, Stopcons: true},                  // '**' 62
+	{Consonant: true, Unknown1: true, Voiced: true, Stopcons: true},                  // 'GX' 63
+	{Consonant: true, Unknown1: true, Voiced: true, Stopcons: true},                  // '**' 64
+	{Consonant: true, Unknown1: true, Voiced: true, Stopcons: true},                  // '**' 65
+	{Consonant: true, Unknown1: true, Stopcons: true, Plosive: true},                 // 'P*' 66
+	{Consonant: true, Unknown1: true, Stopcons: true, Plosive: true},                 // '**' 67
+	{Consonant: true, Unknown1: true, Stopcons: true, Plosive: true},                 // '**' 68
+	{Alveolar: true, Consonant: true, Unknown1: true, Stopcons: true, Plosive: true}, // 'T*' 69
+	{Alveolar: true, Consonant: true, Unknown1: true, Stopcons: true, Plosive: true}, // '**' 70
+	{Alveolar: true, Consonant: true, Unknown1: true, Stopcons: true, Plosive: true}, // '**' 71
+	{Consonant: true, Unknown1: true, Stopcons: true, Plosive: true},                 // 'K*' 72
+	{Consonant: true, Unknown1: true, Stopcons: true, Plosive: true},                 // '**' 73
+	{Consonant: true, Unknown1: true, Stopcons: true, Plosive: true},                 // '**' 74
+	{Consonant: true, Unknown1: true, Stopcons: true, Plosive: true},                 // 'KX' 75
+	{Consonant: true, Unknown1: true, Stopcons: true, Plosive: true},                 // '**' 76
+	{Consonant: true, Unknown1: true, Stopcons: true, Plosive: true},                 // '**' 77
+	{Vowel: true}, // 'UL' 78
+	{Vowel: true, Consonant: true, Plosive: true}, // 'UM' 79
+	{Vowel: true, Consonant: true, Plosive: true}, // 'UN' 80
+}
