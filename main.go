@@ -870,6 +870,13 @@ func createFrames(samState *SamState) {
 	speechData := &samState.Speech
 	phonemeState := &samState.Phonemes
 	samConfig := &samState.Config
+
+	// If in robot mode, calculate the constant pitch value
+	var robotPitch byte
+	if samConfig.Robot {
+		robotPitch = samConfig.Pitch
+	}
+
 	samState.X = byte(0)
 	for i := 0; i < 256; i++ {
 		// get the phoneme at the index
@@ -881,9 +888,9 @@ func createFrames(samState *SamState) {
 		}
 
 		if phoneme == PHONEME_PERIOD {
-			addInflection(speechData, RISING_INFLECTION, samState.X)
+			addInflection(speechData, samConfig, RISING_INFLECTION, samState.X)
 		} else if phoneme == PHONEME_QUESTION {
-			addInflection(speechData, FALLING_INFLECTION, samState.X)
+			addInflection(speechData, samConfig, FALLING_INFLECTION, samState.X)
 		}
 
 		// get the stress amount (more stress = higher pitch)
@@ -902,6 +909,13 @@ func createFrames(samState *SamState) {
 			speechData.Amplitude3[samState.X] = ampl3data[phoneme]                       // F3 amplitude
 			speechData.SampledConsonantFlag[samState.X] = sampledConsonantFlags[phoneme] // phoneme data for sampled consonants
 			speechData.Pitches[samState.X] = samConfig.Pitch + phase1                    // pitch
+
+			// Override pitch with constant pitch if "robot mode"
+			if samConfig.Robot {
+				speechData.Pitches[samState.X] = robotPitch
+			} else {
+				speechData.Pitches[samState.X] = samConfig.Pitch + phase1
+			}
 
 			samState.X++
 			phase2--
@@ -1025,7 +1039,11 @@ func read(speechData *SpeechData, p, y byte) byte {
 // Create a rising or falling inflection 30 frames prior to
 // index X. A rising inflection is used for questions, and
 // a falling inflection is used for statements.
-func addInflection(speechData *SpeechData, inflection, pos byte) {
+func addInflection(speechData *SpeechData, samConfig *SamConfig, inflection, pos byte) {
+	if samConfig.Robot {
+		return // Do nothing in robot mode
+	}
+
 	end := pos
 
 	if pos < 30 {
@@ -1061,7 +1079,11 @@ func addInflection(speechData *SpeechData, inflection, pos byte) {
 // This subtracts the F1 frequency from the pitch to create a
 // pitch contour. Without this, the output would be at a single
 // pitch level (monotone).
-func assignPitchContour(speechData *SpeechData) {
+func assignPitchContour(speechData *SpeechData, samConfig *SamConfig) {
+	if samConfig.Robot {
+		return // Do nothing in robot mode
+	}
+
 	for i := 0; i < 256; i++ {
 		speechData.Pitches[i] -= (speechData.Frequency1[i] >> 1)
 	}
@@ -1548,7 +1570,7 @@ func render(samState *SamState) {
 	t := createTransitions(phonemeState, speechData)
 
 	if !samConfig.SingMode {
-		assignPitchContour(speechData)
+		assignPitchContour(speechData, samConfig)
 	}
 	rescaleAmplitude(speechData)
 
@@ -1904,6 +1926,8 @@ func main() {
 				phonetic = true
 			case "debug":
 				samConfig.Debug = true
+			case "robot":
+				samConfig.Robot = true
 			case "pitch":
 				if i+1 < len(os.Args) {
 					pitch, err := strconv.Atoi(os.Args[i+1])
@@ -2040,6 +2064,7 @@ func initThings(samState *SamState) {
 	samConfig.Throat = 128
 	samConfig.SingMode = false
 	samConfig.Debug = false
+	samConfig.Robot = false
 
 	audioState.BufferPos = 0
 	audioState.OldTimeTableIndex = 0

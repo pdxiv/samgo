@@ -9,6 +9,7 @@ type SamConfig struct {
 	Throat   byte
 	SingMode bool
 	Debug    bool
+	Robot    bool
 }
 
 type AudioState struct {
