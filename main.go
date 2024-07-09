@@ -934,6 +934,8 @@ func code37055(samState *SamState, npos, mask byte) bool {
 	}
 }
 
+// The createTransitions function handles the smooth transition between frames,
+// interpolating values to avoid abrupt changes in sound.
 func createTransitions(phonemeState *PhonemeState, speechData *SpeechData) uint8 {
 	var mem49 uint8 = 0
 	var pos uint8 = 0
@@ -1472,6 +1474,10 @@ func printPhonemes(phonemeIndex, phonemeLength, stress []byte) {
 // SAM generates these formants directly with sin and rectangular waves.
 // To simulate them being driven by the glottal pulse, the waveforms are
 // reset at the beginning of each glottal pulse.
+//
+// The processFrames function is where the frames are converted into actual
+// audio samples. This function doesn't process one frame at a time but rather
+// works sample by sample, updating parameters when moving to a new frame.
 func processFrames(speechData *SpeechData, samConfig *SamConfig, audioState *AudioState, remainingFrames byte) {
 	speedcounter := byte(72)
 	phase1 := byte(0)
