@@ -83,7 +83,7 @@ func textToPhonemes(samState *SamState, input []byte) bool {
 	// secure copy of input because input will be overwritten by phonemes
 	samState.X = byte(0)
 	for samState.X < 255 {
-		a := input[samState.X] & 127
+		a := input[samState.X] & 0x7F
 		if a >= 112 {
 			a &= 95
 		} else if a >= 96 {
@@ -112,7 +112,7 @@ func textToPhonemes(samState *SamState, input []byte) bool {
 					break
 				}
 				samState.X++
-				if (tab36376[inputState.InputTemp[samState.X]] & 1) != 0 {
+				if (tab36376[inputState.InputTemp[samState.X]] & 0x01) != 0 {
 					break
 				}
 				mem56PhonemeOutpos++
@@ -120,7 +120,7 @@ func textToPhonemes(samState *SamState, input []byte) bool {
 				input[samState.X] = '.'
 			}
 			mem57CurrentFlags = tab36376[mem64EqualSignInRule]
-			if (mem57CurrentFlags & 2) != 0 {
+			if (mem57CurrentFlags & 0x02) != 0 {
 				mem62 = 37541
 				break
 			}
@@ -138,8 +138,8 @@ func textToPhonemes(samState *SamState, input []byte) bool {
 			input[samState.X] = 32
 		}
 
-		if (mem57CurrentFlags & 2) == 0 {
-			if (mem57CurrentFlags & 128) == 0 {
+		if (mem57CurrentFlags & 0x02) == 0 {
+			if (mem57CurrentFlags & 0x80) == 0 {
 				return false
 			}
 
@@ -151,7 +151,7 @@ func textToPhonemes(samState *SamState, input []byte) bool {
 		for {
 			// find next rule
 			mem62++ // Start checking from the next position
-			for (getRuleByte(mem62, 0) & 128) == 0 {
+			for (getRuleByte(mem62, 0) & 0x80) == 0 {
 				mem62++ // Continue searching in the next byte
 			}
 
@@ -171,7 +171,7 @@ func textToPhonemes(samState *SamState, input []byte) bool {
 
 			// Look for the '=' sign, taking into account 127 mask
 			y++ // Start checking from the next position
-			for (getRuleByte(mem62, y) & 127) != '=' {
+			for (getRuleByte(mem62, y) & 0x7F) != '=' {
 				y++ // Increment y until '=' is found
 			}
 			mem64EqualSignInRule = y // Store the position of '='
@@ -205,14 +205,14 @@ func textToPhonemes(samState *SamState, input []byte) bool {
 				for {
 					mem66OpenBrace--
 					mem57CurrentFlags = getRuleByte(mem62, mem66OpenBrace)
-					if (mem57CurrentFlags & 128) != 0 {
+					if (mem57CurrentFlags & 0x80) != 0 {
 						inputTempIndex = mem60InputMatchPos
 
 						processRuleFlag = true
 						break
 					}
-					samState.X = mem57CurrentFlags & 127
-					if (tab36376[samState.X] & 128) == 0 {
+					samState.X = mem57CurrentFlags & 0x7F
+					if (tab36376[samState.X] & 0x80) == 0 {
 						break
 					}
 					if inputState.InputTemp[mem59-1] != mem57CurrentFlags {
@@ -288,7 +288,7 @@ func textToPhonemes(samState *SamState, input []byte) bool {
 				if !processRuleFlag {
 					samState.X = inputTempIndex + 1
 					if inputState.InputTemp[samState.X] == 'E' {
-						if (tab36376[inputState.InputTemp[samState.X+1]] & 128) != 0 {
+						if (tab36376[inputState.InputTemp[samState.X+1]] & 0x80) != 0 {
 							samState.X++
 							a := inputState.InputTemp[samState.X]
 							if a == 'L' {
@@ -325,12 +325,12 @@ func textToPhonemes(samState *SamState, input []byte) bool {
 
 							for {
 								mem57CurrentFlags = getRuleByte(mem62, y)
-								a := mem57CurrentFlags & 127
+								a := mem57CurrentFlags & 0x7F
 								if a != '=' {
 									mem56PhonemeOutpos++
 									input[mem56PhonemeOutpos] = a
 								}
-								if (mem57CurrentFlags & 128) != 0 {
+								if (mem57CurrentFlags & 0x80) != 0 {
 									break // Break out of the inner for loop
 								}
 								y++
@@ -339,7 +339,7 @@ func textToPhonemes(samState *SamState, input []byte) bool {
 						}
 						mem65ClosingBrace = y
 						mem57CurrentFlags = getRuleByte(mem62, y)
-						if (tab36376[mem57CurrentFlags] & 128) == 0 {
+						if (tab36376[mem57CurrentFlags] & 0x80) == 0 {
 							break
 						}
 						if inputState.InputTemp[inputTempIndex+1] != mem57CurrentFlags {
@@ -415,7 +415,7 @@ func renderVoicedSample(audioState *AudioState, hi uint16, off uint8, phase1 uin
 		sample := sampleTable[hi+uint16(off)]
 
 		for bit != 0 {
-			if (sample & 128) != 0 {
+			if (sample & 0x80) != 0 {
 				output(audioState, 3, 26)
 			} else {
 				output(audioState, 4, 6)
@@ -506,7 +506,7 @@ func combineGlottalAndFormants(speechData *SpeechData, audioState *AudioState, p
 func renderSample(speechData *SpeechData, audioState *AudioState, mem66OpenBrace *uint8, consonantFlag, mem49 uint8) {
 	// mask low three bits and subtract 1 to get value to
 	// convert 0 bits on unvoiced samples.
-	hibyte := (consonantFlag & 7) - 1
+	hibyte := (consonantFlag & 0x07) - 1
 
 	// determine which offset to use from table { 0x18, 0x1A, 0x17, 0x17, 0x17 }
 	// T, S, Z                0          0x18
@@ -517,7 +517,7 @@ func renderSample(speechData *SpeechData, audioState *AudioState, mem66OpenBrace
 
 	hi := uint16(hibyte) * 256
 	// voiced sample?
-	pitchl := consonantFlag & 248
+	pitchl := consonantFlag & 0xF8
 	if pitchl == 0 {
 		// voiced phoneme: Z*, ZH, V*, DH
 		pitchl = speechData.Pitches[mem49] >> 4
@@ -532,7 +532,7 @@ func renderUnvoicedSample(audioState *AudioState, hi uint16, off, mem53 uint8) {
 		bit := uint8(8)
 		sample := sampleTable[hi+uint16(off)]
 		for bit != 0 {
-			if (sample & 128) != 0 {
+			if (sample & 0x80) != 0 {
 				output(audioState, 2, 5)
 			} else {
 				output(audioState, 1, mem53)
@@ -551,7 +551,7 @@ func handleCh2(samState *SamState, ch byte, mem int, inputTemp []byte) int {
 	samState.X = byte(mem)
 	tmp := tab36376[inputTemp[mem]]
 	if ch == ' ' {
-		if tmp&128 != 0 {
+		if tmp&0x80 != 0 {
 			return 1
 		}
 	} else if ch == '#' {
@@ -675,35 +675,35 @@ func parser1(phonemeState *PhonemeState, inputState *InputState) bool {
 
 func parser2(samConfig *SamConfig, phonemeState *PhonemeState) {
 	pos := byte(0) // mem66_openBrace
-	var p byte
+	var currentPhonemeIndex byte
 
 	if samConfig.Debug {
 		fmt.Println("Parser2")
 	}
 
-	for p = phonemeState.PhonemeIndex[pos]; p != END; p = phonemeState.PhonemeIndex[pos] {
+	for currentPhonemeIndex = phonemeState.PhonemeIndex[pos]; currentPhonemeIndex != END; currentPhonemeIndex = phonemeState.PhonemeIndex[pos] {
 		var pf PhonemeFlag
 		var prior byte
 
 		if samConfig.Debug {
-			fmt.Printf("%d: %c%c\n", pos, signInputTable1[p], signInputTable2[p])
+			fmt.Printf("%d: %c%c\n", pos, signInputTable1[currentPhonemeIndex], signInputTable2[currentPhonemeIndex])
 		}
 
-		if p == 0 { // Is phoneme pause?
+		if currentPhonemeIndex == 0 { // Is phoneme pause?
 			pos = pos + 1
 			continue
 		}
 
-		pf = phonemeFlag[p]
+		pf = phonemeFlag[currentPhonemeIndex]
 		prior = phonemeState.PhonemeIndex[pos-1]
 
 		if pf.Diphthong {
-			ruleDipthong(phonemeState, samConfig, p, pf, pos)
-		} else if p == 78 {
+			ruleDipthong(phonemeState, samConfig, currentPhonemeIndex, pf, pos)
+		} else if currentPhonemeIndex == 78 {
 			changeRule(phonemeState, samConfig, pos, 24, "UL -> AX L") // Example: MEDDLE
-		} else if p == 79 {
+		} else if currentPhonemeIndex == 79 {
 			changeRule(phonemeState, samConfig, pos, 27, "UM -> AX M") // Example: ASTRONOMY
-		} else if p == 80 {
+		} else if currentPhonemeIndex == 80 {
 			changeRule(phonemeState, samConfig, pos, 28, "UN -> AX N") // Example: FUNCTION
 		} else if pf.Vowel && phonemeState.Stress[pos] != 0 {
 			// RULE:
@@ -711,13 +711,13 @@ func parser2(samConfig *SamConfig, phonemeState *PhonemeState) {
 			//       <SILENCE> Q <VOWEL>
 			// EXAMPLE: AWAY EIGHT
 			if phonemeState.PhonemeIndex[pos+1] == 0 { // If following phoneme is a pause, get next
-				p = phonemeState.PhonemeIndex[pos+2]
-				if p != END && phonemeFlag[p].Vowel && phonemeState.Stress[pos+2] != 0 {
+				currentPhonemeIndex = phonemeState.PhonemeIndex[pos+2]
+				if currentPhonemeIndex != END && phonemeFlag[currentPhonemeIndex].Vowel && phonemeState.Stress[pos+2] != 0 {
 					describeRule(samConfig, "Insert glottal stop between two stressed vowels with space between them")
 					insert(phonemeState, pos+2, 31, 0, 0) // 31 = 'Q'
 				}
 			}
-		} else if p == pR { // RULES FOR PHONEMES BEFORE R
+		} else if currentPhonemeIndex == pR { // RULES FOR PHONEMES BEFORE R
 			if prior == pT {
 				change(phonemeState, samConfig, pos-1, 42, "T R -> CH R") // Example: TRACK
 			} else if prior == pD {
@@ -725,30 +725,30 @@ func parser2(samConfig *SamConfig, phonemeState *PhonemeState) {
 			} else if phonemeFlag[prior].Vowel {
 				change(phonemeState, samConfig, pos, 18, "<VOWEL> R -> <VOWEL> RX") // Example: ART
 			}
-		} else if p == 24 && phonemeFlag[prior].Vowel {
+		} else if currentPhonemeIndex == 24 && phonemeFlag[prior].Vowel {
 			change(phonemeState, samConfig, pos, 19, "<VOWEL> L -> <VOWEL> LX") // Example: ALL
-		} else if prior == 60 && p == 32 { // 'G' 'S'
+		} else if prior == 60 && currentPhonemeIndex == 32 { // 'G' 'S'
 			// Can't get to fire -
 			//       1. The G -> GX rule intervenes
 			//       2. Reciter already replaces GS -> GZ
 			change(phonemeState, samConfig, pos, 38, "G S -> G Z")
-		} else if p == 60 {
+		} else if currentPhonemeIndex == 60 {
 			ruleG(samConfig, phonemeState, pos)
 		} else {
-			if p == 72 { // 'K'
+			if currentPhonemeIndex == 72 { // 'K'
 				// K <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> KX <VOWEL OR DIPTHONG NOT
 				// ENDING WITH IY> Example: COW
 				Y := phonemeState.PhonemeIndex[pos+1]
 				// If at end, replace current phoneme with KX
 				if !phonemeFlag[Y].DipYX || Y == END { // VOWELS AND DIPTHONGS ENDING WITH IY SOUND flag set?
 					change(phonemeState, samConfig, pos, 75, "K <VOWEL OR DIPTHONG NOT ENDING WITH IY> -> KX <VOWEL OR DIPTHONG NOT ENDING WITH IY>")
-					p = 75
-					pf = phonemeFlag[p]
+					currentPhonemeIndex = 75
+					pf = phonemeFlag[currentPhonemeIndex]
 				}
 			}
 
 			// Replace with softer version?
-			if phonemeFlag[p].Plosive && prior == 32 { // 'S'
+			if phonemeFlag[currentPhonemeIndex].Plosive && prior == 32 { // 'S'
 				// RULE:
 				//      S P -> S B
 				//      S T -> S D
@@ -757,34 +757,41 @@ func parser2(samConfig *SamConfig, phonemeState *PhonemeState) {
 				// Examples: SPY, STY, SKY, SCOWL
 
 				if samConfig.Debug {
-					fmt.Printf("RULE: S* %c%c -> S* %c%c\n", signInputTable1[p],
-						signInputTable2[p], signInputTable1[p-12],
-						signInputTable2[p-12])
+					fmt.Printf("RULE: S* %c%c -> S* %c%c\n", signInputTable1[currentPhonemeIndex],
+						signInputTable2[currentPhonemeIndex], signInputTable1[currentPhonemeIndex-12],
+						signInputTable2[currentPhonemeIndex-12])
 				}
-				phonemeState.PhonemeIndex[pos] = p - 12
+				phonemeState.PhonemeIndex[pos] = currentPhonemeIndex - 12
 			} else if !pf.Plosive {
-				p = phonemeState.PhonemeIndex[pos]
-				if p == 53 {
+				currentPhonemeIndex = phonemeState.PhonemeIndex[pos]
+				if currentPhonemeIndex == 53 {
 					ruleAlveolarUw(phonemeState, samConfig, pos) // Example: NEW, DEW, SUE, ZOO, THOO, TOO
-				} else if p == 42 {
+				} else if currentPhonemeIndex == 42 {
 					ruleCh(phonemeState, samConfig, pos) // Example: CHEW
-				} else if p == 44 {
+				} else if currentPhonemeIndex == 44 {
 					ruleJ(phonemeState, samConfig, pos) // Example: JAY
 				}
 			}
 
-			if p == 69 || p == 57 { // 'T', 'D'
+			if currentPhonemeIndex == 69 || currentPhonemeIndex == 57 { // 'T', 'D'
 				// RULE: Soften T following vowel
 				// NOTE: This rule fails for cases such as "ODD"
 				//       <UNSTRESSED VOWEL> T <PAUSE> -> <UNSTRESSED VOWEL> DX <PAUSE>
 				//       <UNSTRESSED VOWEL> D <PAUSE>  -> <UNSTRESSED VOWEL> DX <PAUSE>
 				// Example: PARTY, TARDY
 				if phonemeFlag[phonemeState.PhonemeIndex[pos-1]].Vowel {
-					p = phonemeState.PhonemeIndex[pos+1]
-					if p == 0 {
-						p = phonemeState.PhonemeIndex[pos+2]
+					currentPhonemeIndex = phonemeState.PhonemeIndex[pos+1]
+					if currentPhonemeIndex == 0 {
+						currentPhonemeIndex = phonemeState.PhonemeIndex[pos+2]
 					}
-					if phonemeFlag[p].Vowel && phonemeState.Stress[pos+1] == 0 {
+
+					var isVowel bool
+					if currentPhonemeIndex < byte(len(phonemeFlag)) {
+						isVowel = phonemeFlag[currentPhonemeIndex].Vowel
+					} else {
+						isVowel = true
+					}
+					if isVowel && phonemeState.Stress[pos+1] == 0 {
 						change(phonemeState, samConfig, pos, 30, "Soften T or D following vowel or ER and preceding a pause -> DX")
 					}
 				}
@@ -887,10 +894,12 @@ func createFrames(samState *SamState) {
 			break
 		}
 
-		if phoneme == PHONEME_PERIOD {
-			addInflection(speechData, samConfig, RISING_INFLECTION, samState.X)
-		} else if phoneme == PHONEME_QUESTION {
-			addInflection(speechData, samConfig, FALLING_INFLECTION, samState.X)
+		if !samConfig.Robot {
+			if phoneme == PHONEME_PERIOD {
+				addInflection(speechData, samConfig, RISING_INFLECTION, samState.X)
+			} else if phoneme == PHONEME_QUESTION {
+				addInflection(speechData, samConfig, FALLING_INFLECTION, samState.X)
+			}
 		}
 
 		// get the stress amount (more stress = higher pitch)
@@ -982,7 +991,7 @@ func createTransitions(phonemeState *PhonemeState, speechData *SpeechData) uint8
 		phase3 = mem49 - phase1
 		transition = phase1 + phase2 // total transition?
 
-		if ((transition - 2) & 128) == 0 {
+		if ((transition - 2) & 0x80) == 0 {
 			table := uint8(169)
 			interpolatePitch(speechData, phonemeState, pos, mem49, phase3)
 			for table < 175 {
@@ -1042,10 +1051,6 @@ func read(speechData *SpeechData, p, y byte) byte {
 // index X. A rising inflection is used for questions, and
 // a falling inflection is used for statements.
 func addInflection(speechData *SpeechData, samConfig *SamConfig, inflection, pos byte) {
-	if samConfig.Robot {
-		return // Do nothing in robot mode
-	}
-
 	end := pos
 
 	if pos < 30 {
@@ -1082,10 +1087,6 @@ func addInflection(speechData *SpeechData, samConfig *SamConfig, inflection, pos
 // pitch contour. Without this, the output would be at a single
 // pitch level (monotone).
 func assignPitchContour(speechData *SpeechData, samConfig *SamConfig) {
-	if samConfig.Robot {
-		return // Do nothing in robot mode
-	}
-
 	for i := 0; i < 256; i++ {
 		speechData.Pitches[i] -= (speechData.Frequency1[i] >> 1)
 	}
@@ -1139,7 +1140,7 @@ func copyStress(phonemeState *PhonemeState) {
 			y := phonemeState.PhonemeIndex[pos+1]
 			if y != 255 && phonemeFlag[y].Vowel {
 				y = phonemeState.Stress[pos+1]
-				if y != 0 && (y&128) == 0 {
+				if y != 0 && (y&0x80) == 0 {
 					phonemeState.Stress[pos] = y + 1
 				}
 			}
@@ -1496,7 +1497,7 @@ func processFrames(speechData *SpeechData, samConfig *SamConfig, audioState *Aud
 		flags := speechData.SampledConsonantFlag[y]
 
 		// unvoiced sampled phoneme?
-		if (flags & 248) != 0 {
+		if (flags & 0xF8) != 0 {
 			renderSample(speechData, audioState, &mem66OpenBrace, flags, y)
 			// skip ahead two in the phoneme buffer
 			y += 2
@@ -1575,7 +1576,7 @@ func render(samState *SamState) {
 	createFrames(samState)
 	t := createTransitions(phonemeState, speechData)
 
-	if !samConfig.SingMode {
+	if !samConfig.Robot && !samConfig.SingMode {
 		assignPitchContour(speechData, samConfig)
 	}
 	rescaleAmplitude(speechData)
@@ -1603,7 +1604,7 @@ func output(audioState *AudioState, index int, A byte) {
 	audioState.OldTimeTableIndex = index
 	// write a little bit in advance
 	for k := 0; k < 5; k++ {
-		audioState.Buffer[audioState.BufferPos/50+k] = (A & 15) * 16
+		audioState.Buffer[audioState.BufferPos/50+k] = (A & 0x0F) * 16
 	}
 }
 
@@ -1735,7 +1736,7 @@ func setInput(input []byte) []byte {
 	result[0] = ' '
 
 	for i := 0; i < len(input) && i < 255; i++ {
-		char := input[i] & 127
+		char := input[i] & 0x7F
 		if char >= 112 {
 			char = char & 95
 		} else if char >= 96 {
@@ -1792,7 +1793,7 @@ func setPhonemeLength(phonemeState *PhonemeState) {
 	position := byte(0)
 	for phonemeState.PhonemeIndex[position] != 255 {
 		a := phonemeState.Stress[position]
-		if a == 0 || (a&128) != 0 {
+		if a == 0 || (a&0x80) != 0 {
 			phonemeState.PhonemeLength[position] = phonemeLengthTable[phonemeState.PhonemeIndex[position]]
 		} else {
 			phonemeState.PhonemeLength[position] = phonemeStressedLengthTable[phonemeState.PhonemeIndex[position]]
@@ -2137,13 +2138,13 @@ func printRule(offset uint16) {
 	fmt.Print("Applying rule: ")
 	for {
 		a = getRuleByte(offset, i)
-		if (a & 127) == '=' {
+		if (a & 0x7F) == '=' {
 			fmt.Print(" -> ")
 		} else {
-			fmt.Printf("%c", a&127)
+			fmt.Printf("%c", a&0x7F)
 		}
 		i++
-		if (a & 128) != 0 {
+		if (a & 0x80) != 0 {
 			break
 		}
 	}
@@ -2155,26 +2156,26 @@ func handleCh(samState *SamState, ch, mem byte) int {
 	samState.X = mem
 	tmp := tab36376[inputState.InputTemp[mem]]
 	if ch == ' ' {
-		if (tmp & 128) != 0 {
+		if (tmp & 0x80) != 0 {
 			return 1
 		}
 	} else if ch == '#' {
-		if (tmp & 64) == 0 {
+		if (tmp & 0x40) == 0 {
 			return 1
 		}
 	} else if ch == '.' {
-		if (tmp & 8) == 0 {
+		if (tmp & 0x08) == 0 {
 			return 1
 		}
 	} else if ch == '&' {
-		if (tmp & 16) == 0 {
+		if (tmp & 0x10) == 0 {
 			if inputState.InputTemp[mem] != 72 {
 				return 1
 			}
 			mem++
 		}
 	} else if ch == '^' {
-		if (tmp & 32) == 0 {
+		if (tmp & 0x20) == 0 {
 			return 1
 		}
 	} else if ch == '+' {
