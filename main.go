@@ -53,7 +53,7 @@ func playAudio(audioState *AudioState, buffer []byte, bufferLength int) error {
 
 	// Wait for the audio to finish playing
 	for player.IsPlaying() {
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	return nil
