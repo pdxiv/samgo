@@ -1599,12 +1599,12 @@ func rescaleAmplitude(speechData *SpeechData) {
 	}
 }
 
-func output(audioState *AudioState, index int, A byte) {
+func output(audioState *AudioState, index int, amplitude byte) {
 	audioState.BufferPos += timetable[audioState.OldTimeTableIndex][index]
 	audioState.OldTimeTableIndex = index
 	// write a little bit in advance
 	for k := 0; k < 5; k++ {
-		audioState.Buffer[audioState.BufferPos/50+k] = (A & 0x0F) * 16
+		audioState.Buffer[audioState.BufferPos/SampleRateConversionDivisor+k] = (amplitude & 0x0F) * 16
 	}
 }
 
@@ -2004,9 +2004,9 @@ func main() {
 	var err error
 
 	if wavFilename != "" {
-		err = writeWav(wavFilename, audioState.Buffer, audioState.BufferPos/50)
+		err = writeWav(wavFilename, audioState.Buffer, audioState.BufferPos/SampleRateConversionDivisor)
 	} else {
-		err = playAudio(audioState, audioState.Buffer, audioState.BufferPos/50)
+		err = playAudio(audioState, audioState.Buffer, audioState.BufferPos/SampleRateConversionDivisor)
 
 		if err != nil {
 			log.Fatalf("Failed to output audio: %v", err)

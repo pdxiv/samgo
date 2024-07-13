@@ -47,18 +47,21 @@ type InputState struct {
 }
 
 type SamState struct {
-	Config    SamConfig
-	Audio     AudioState
-	Phonemes  PhonemeState
-	Speech    SpeechData
-	Input     InputState
-	X         byte
-	TimeTable [5][5]int
+	Config   SamConfig
+	Audio    AudioState
+	Phonemes PhonemeState
+	Speech   SpeechData
+	Input    InputState
+	X        byte
 }
 
 const (
 	SampleRate     = 22050
 	SampleChannels = 1
+
+	// The below calculations work well for a sample rate of 22050, but higher samplerates are broken
+	SampleRateProduct           = 1102500
+	SampleRateConversionDivisor = SampleRateProduct / SampleRate
 )
 
 var timetable = [5][5]int{
