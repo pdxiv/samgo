@@ -59,17 +59,16 @@ const (
 	SampleRate     = 22050
 	SampleChannels = 1
 
-	// The below calculations work well for a sample rate of 22050, but higher samplerates are broken
-	SampleRateProduct           = 1102500
-	SampleRateConversionDivisor = SampleRateProduct / SampleRate
+	InternalSampleRate          = 1102500 // Almost the SID clock
+	SampleRateConversionDivisor = float64(InternalSampleRate) / float64(SampleRate)
 )
 
 var timetable = [5][5]int{
-	{162, 167, 167, 127, 128},
-	{226, 60, 60, 0, 0},
-	{225, 60, 59, 0, 0},
-	{200, 0, 0, 54, 55},
-	{199, 0, 0, 54, 54},
+	{162, 167, 167, 127, 128}, // Formant synth
+	{226, 60, 60, 0, 0},       // Unvoiced sample 0
+	{225, 60, 59, 0, 0},       // Unvoiced sample 1
+	{200, 0, 0, 54, 55},       // Voiced sample 0
+	{199, 0, 0, 54, 54},       // Voiced sample 1
 }
 
 var tab36376 = []byte{
