@@ -4,7 +4,7 @@ import "github.com/ebitengine/oto/v3"
 
 type SamConfig struct {
 	Speed    byte
-	Pitch    byte
+	Pitch    float64
 	Mouth    byte
 	Throat   byte
 	SingMode bool
@@ -30,15 +30,15 @@ type PhonemeState struct {
 	PhonemeLengthOutput []byte // Initialized to 60 values in original implementation
 }
 
-type SpeechData struct {
-	Frequency1           []byte // Initialized to 256 values in original implementation
-	Frequency2           []byte // Initialized to 256 values in original implementation
-	Frequency3           []byte // Initialized to 256 values in original implementation
-	Amplitude1           []byte // Initialized to 256 values in original implementation
-	Amplitude2           []byte // Initialized to 256 values in original implementation
-	Amplitude3           []byte // Initialized to 256 values in original implementation
-	SampledConsonantFlag []byte // Initialized to 256 values in original implementation
-	Pitches              []byte // Initialized to 256 values in original implementation
+type SpeechFrame struct {
+	Frequency1           []float64 // Initialized to 256 values in original implementation
+	Frequency2           []float64 // Initialized to 256 values in original implementation
+	Frequency3           []float64 // Initialized to 256 values in original implementation
+	Amplitude1           []float64 // Initialized to 256 values in original implementation
+	Amplitude2           []float64 // Initialized to 256 values in original implementation
+	Amplitude3           []float64 // Initialized to 256 values in original implementation
+	SampledConsonantFlag []byte    // Initialized to 256 values in original implementation
+	Pitches              []float64 // Initialized to 256 values in original implementation
 }
 
 type InputState struct {
@@ -50,7 +50,7 @@ type SamState struct {
 	Config   SamConfig
 	Audio    AudioState
 	Phonemes PhonemeState
-	Speech   SpeechData
+	Speech   SpeechFrame
 	Input    InputState
 	X        byte
 }

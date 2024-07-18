@@ -5,13 +5,19 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"math"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ebitengine/oto/v3"
 )
+
+type IntOrFloat interface {
+	~int | ~float64
+}
 
 func initAudio(audioState *AudioState) error {
 	audioState.SampleRate = SampleRate
@@ -434,10 +440,10 @@ func renderVoicedSample(audioState *AudioState, hi uint16, off uint8, phase1 uin
 	return off
 }
 
-func combineGlottalAndFormants(speechData *SpeechData, audioState *AudioState, phase1, phase2, phase3, Y uint8) {
+func combineGlottalAndFormants(speechFrame *SpeechFrame, audioState *AudioState, phase1, phase2, phase3, Y uint8) {
 	var tmp uint32
-	tmp = uint32(multtable[sinus[phase1]|speechData.Amplitude1[Y]])
-	tmp += uint32(multtable[sinus[phase2]|speechData.Amplitude2[Y]])
+	tmp = uint32(multtable[sinus[phase1]|byte(speechFrame.Amplitude1[Y])])
+	tmp += uint32(multtable[sinus[phase2]|byte(speechFrame.Amplitude2[Y])])
 
 	if tmp > 255 {
 		tmp += 1
@@ -445,7 +451,7 @@ func combineGlottalAndFormants(speechData *SpeechData, audioState *AudioState, p
 		tmp += 0
 	}
 
-	tmp += uint32(multtable[rectangle[phase3]|speechData.Amplitude3[Y]])
+	tmp += uint32(multtable[rectangle[phase3]|byte(speechFrame.Amplitude3[Y])])
 	tmp += 136
 	tmp >>= 4 // Scale down to 0..15 range of C64 audio.
 
@@ -503,7 +509,7 @@ func combineGlottalAndFormants(speechData *SpeechData, audioState *AudioState, p
 //	index = (SampledPhonemesTable[i] & 7) - 1;
 //
 // For voices samples, samples are interleaved between voiced output.
-func renderSample(speechData *SpeechData, audioState *AudioState, mem66OpenBrace *uint8, consonantFlag, mem49 uint8) {
+func renderSample(speechFrame *SpeechFrame, audioState *AudioState, mem66OpenBrace *uint8, consonantFlag, mem49 uint8) {
 	// mask low three bits and subtract 1 to get value to
 	// convert 0 bits on unvoiced samples.
 	hibyte := (consonantFlag & 0x07) - 1
@@ -520,7 +526,7 @@ func renderSample(speechData *SpeechData, audioState *AudioState, mem66OpenBrace
 	pitchl := consonantFlag & 0xF8
 	if pitchl == 0 {
 		// voiced phoneme: Z*, ZH, V*, DH
-		pitchl = speechData.Pitches[mem49] >> 4
+		pitchl = byte(math.Round(speechFrame.Pitches[mem49])) >> 4
 		*mem66OpenBrace = renderVoicedSample(audioState, hi, *mem66OpenBrace, pitchl^255)
 	} else {
 		renderUnvoicedSample(audioState, hi, pitchl^255, tab48426[hibyte])
@@ -859,7 +865,8 @@ func wildMatch(sign1 byte) int {
 	return -1
 }
 
-func min(l, r int) int {
+// Generic min function
+func min[T IntOrFloat](l, r T) T {
 	if l < r {
 		return l
 	}
@@ -874,12 +881,12 @@ func min(l, r int) int {
 //
 // The parameters are copied from the phoneme to the frame verbatim.
 func createFrames(samState *SamState) {
-	speechData := &samState.Speech
+	speechFrame := &samState.Speech
 	phonemeState := &samState.Phonemes
 	samConfig := &samState.Config
 
 	// If in robot mode, calculate the constant pitch value
-	var robotPitch byte
+	var robotPitch float64
 	if samConfig.Robot {
 		robotPitch = samConfig.Pitch
 	}
@@ -896,9 +903,9 @@ func createFrames(samState *SamState) {
 
 		if !samConfig.Robot {
 			if phoneme == PHONEME_PERIOD {
-				addInflection(speechData, samConfig, RISING_INFLECTION, samState.X)
+				addInflection(speechFrame, samConfig, RISING_INFLECTION, samState.X)
 			} else if phoneme == PHONEME_QUESTION {
-				addInflection(speechData, samConfig, FALLING_INFLECTION, samState.X)
+				addInflection(speechFrame, samConfig, FALLING_INFLECTION, samState.X)
 			}
 		}
 
@@ -910,20 +917,19 @@ func createFrames(samState *SamState) {
 
 		// copy from the source to the frames list
 		for phase2 != 0 {
-			speechData.Frequency1[samState.X] = freq1data[phoneme]                       // F1 frequency
-			speechData.Frequency2[samState.X] = freq2data[phoneme]                       // F2 frequency
-			speechData.Frequency3[samState.X] = freq3data[phoneme]                       // F3 frequency
-			speechData.Amplitude1[samState.X] = ampl1data[phoneme]                       // F1 amplitude
-			speechData.Amplitude2[samState.X] = ampl2data[phoneme]                       // F2 amplitude
-			speechData.Amplitude3[samState.X] = ampl3data[phoneme]                       // F3 amplitude
-			speechData.SampledConsonantFlag[samState.X] = sampledConsonantFlags[phoneme] // phoneme data for sampled consonants
-			speechData.Pitches[samState.X] = samConfig.Pitch + phase1                    // pitch
-
+			speechFrame.Frequency1[samState.X] = float64(freq1data[phoneme])                   // F1 frequency
+			speechFrame.Frequency2[samState.X] = float64(freq2data[phoneme])                   // F2 frequency
+			speechFrame.Frequency3[samState.X] = float64(freq3data[phoneme])                   // F3 frequency
+			speechFrame.Amplitude1[samState.X] = float64(ampl1data[phoneme])                   // F1 amplitude
+			speechFrame.Amplitude2[samState.X] = float64(ampl2data[phoneme])                   // F2 amplitude
+			speechFrame.Amplitude3[samState.X] = float64(ampl3data[phoneme])                   // F3 amplitude
+			speechFrame.SampledConsonantFlag[samState.X] = sampledConsonantFlags[phoneme]      // phoneme data for sampled consonants
+			speechFrame.Pitches[samState.X] = math.Mod(samConfig.Pitch+float64(phase1), 256.0) // pitch
 			// Override pitch with constant pitch if "robot mode"
 			if samConfig.Robot {
-				speechData.Pitches[samState.X] = robotPitch
+				speechFrame.Pitches[samState.X] = robotPitch
 			} else {
-				speechData.Pitches[samState.X] = samConfig.Pitch + phase1
+				speechFrame.Pitches[samState.X] = math.Mod(samConfig.Pitch+float64(phase1), 256.0)
 			}
 
 			samState.X++
@@ -945,7 +951,7 @@ func code37055(samState *SamState, npos, mask byte) bool {
 
 // The createTransitions function handles the smooth transition between frames,
 // interpolating values to avoid abrupt changes in sound.
-func createTransitions(phonemeState *PhonemeState, speechData *SpeechData) uint8 {
+func createTransitions(phonemeState *PhonemeState, speechFrame *SpeechFrame, samConfig *SamConfig) uint8 {
 	var mem49 uint8 = 0
 	var pos uint8 = 0
 
@@ -992,21 +998,16 @@ func createTransitions(phonemeState *PhonemeState, speechData *SpeechData) uint8
 		transition = phase1 + phase2 // total transition?
 
 		if ((transition - 2) & 0x80) == 0 {
-			table := uint8(169)
-			interpolatePitch(speechData, phonemeState, pos, mem49, phase3)
-			for table < 175 {
-				// tables:
-				// 168  pitches[]
-				// 169  frequency1
-				// 170  frequency2
-				// 171  frequency3
-				// 172  amplitude1
-				// 173  amplitude2
-				// 174  amplitude3
 
-				value := int8(read(speechData, table, speedcounter)) - int8(read(speechData, table, phase3))
-				interpolate(speechData, transition, table, phase3, value)
-				table++
+			interpolatePitch(speechFrame, phonemeState, samConfig, pos, mem49, phase3)
+			for table := uint8(169); table < 175; table++ {
+				// tables: 168: pitches, 169: frequency1, 170: frequency2, 171: frequency3, 172: amplitude1, 173: amplitude2, 174: amplitude3
+				value := read(speechFrame, table, speedcounter) - read(speechFrame, table, phase3)
+				if samConfig.Robot {
+					interpolateSmoothly(speechFrame, transition, table, phase3, value)
+				} else {
+					interpolate(speechFrame, transition, table, phase3, value)
+				}
 			}
 		}
 		pos++
@@ -1026,22 +1027,22 @@ func getRuleByte(mem62 uint16, y byte) byte {
 	return rules[address+int(y)]
 }
 
-func read(speechData *SpeechData, p, y byte) byte {
+func read(speechFrame *SpeechFrame, p, y byte) float64 {
 	switch p {
 	case 168:
-		return speechData.Pitches[y]
+		return speechFrame.Pitches[y]
 	case 169:
-		return speechData.Frequency1[y]
+		return speechFrame.Frequency1[y]
 	case 170:
-		return speechData.Frequency2[y]
+		return speechFrame.Frequency2[y]
 	case 171:
-		return speechData.Frequency3[y]
+		return speechFrame.Frequency3[y]
 	case 172:
-		return speechData.Amplitude1[y]
+		return speechFrame.Amplitude1[y]
 	case 173:
-		return speechData.Amplitude2[y]
+		return speechFrame.Amplitude2[y]
 	case 174:
-		return speechData.Amplitude3[y]
+		return speechFrame.Amplitude3[y]
 	default:
 		panic("Error reading from tables")
 	}
@@ -1050,7 +1051,7 @@ func read(speechData *SpeechData, p, y byte) byte {
 // Create a rising or falling inflection 30 frames prior to
 // index X. A rising inflection is used for questions, and
 // a falling inflection is used for statements.
-func addInflection(speechData *SpeechData, samConfig *SamConfig, inflection, pos byte) {
+func addInflection(speechFrame *SpeechFrame, samConfig *SamConfig, inflection, pos byte) {
 	end := pos
 
 	if pos < 30 {
@@ -1059,22 +1060,21 @@ func addInflection(speechData *SpeechData, samConfig *SamConfig, inflection, pos
 		pos -= 30
 	}
 
-	var a byte
-	for speechData.Pitches[pos] == 127 {
+	var a float64
+	for speechFrame.Pitches[pos] == 127 {
 		pos++
 	}
-	a = speechData.Pitches[pos]
+	a = speechFrame.Pitches[pos]
 
 	for pos != end {
-		a += inflection
-		speechData.Pitches[pos] = a
-
+		a += float64(inflection)
+		speechFrame.Pitches[pos] = a
 		for {
 			pos++
 			if pos == end {
 				break // Exit loop if we've reached the end
 			}
-			if speechData.Pitches[pos] != 255 {
+			if speechFrame.Pitches[pos] != 255 {
 				break // Exit loop if we've found a non-255 pitch
 			}
 		}
@@ -1086,9 +1086,9 @@ func addInflection(speechData *SpeechData, samConfig *SamConfig, inflection, pos
 // This subtracts the F1 frequency from the pitch to create a
 // pitch contour. Without this, the output would be at a single
 // pitch level (monotone).
-func assignPitchContour(speechData *SpeechData, samConfig *SamConfig) {
+func assignPitchContour(speechFrame *SpeechFrame, samConfig *SamConfig) {
 	for i := 0; i < 256; i++ {
-		speechData.Pitches[i] -= (speechData.Frequency1[i] >> 1)
+		speechFrame.Pitches[i] -= math.Trunc(float64(speechFrame.Frequency1[i]) / 2)
 	}
 }
 
@@ -1356,16 +1356,14 @@ func insert(phonemeState *PhonemeState, position, mem60InputMatchPos, mem59, mem
 	phonemeState.Stress[position] = mem58Variant
 }
 
-func interpolate(speechData *SpeechData, width, table, frame byte, mem53 int8) {
-	sign := mem53 < 0
-	remainder := byte(abs(int(mem53))) % width
-	div := uint8(int(mem53) / int(width))
+func interpolate(speechFrame *SpeechFrame, width, table, frame byte, interpolationValue float64) {
+	sign := interpolationValue < 0
+	remainder := byte(abs(int(interpolationValue))) % width
+	div := uint8(int(interpolationValue) / int(width))
 	error := byte(0)
-	pos := width
-	val := read(speechData, table, frame) + div
+	val := uint8(math.Round(read(speechFrame, table, frame))) + div
 
-	pos--
-	for pos > 0 {
+	for pos := width - 1; pos > 0; pos-- {
 		error += remainder
 		if error >= width { // accumulated a whole integer error, so adjust output
 			error -= width
@@ -1376,9 +1374,28 @@ func interpolate(speechData *SpeechData, width, table, frame byte, mem53 int8) {
 			}
 		}
 		frame++
-		write(speechData, table, frame, val) // Write updated value back to next frame.
+		write(speechFrame, table, frame, float64(val)) // Write updated value back to next frame.
 		val += div
-		pos--
+	}
+}
+
+func interpolateSmoothly(speechFrame *SpeechFrame, width, table, frame byte, interpolationValue float64) {
+	sign := interpolationValue < 0
+	absInterpolationValue := math.Abs(interpolationValue)
+	step := absInterpolationValue / float64(width)
+
+	startVal := read(speechFrame, table, frame)
+
+	for pos := width - 1; pos > 0; pos-- {
+		frame++
+		interpolatedVal := startVal + step*float64(width-pos)
+
+		if sign {
+			interpolatedVal = startVal - step*float64(width-pos)
+			interpolatedVal = math.Max(0, interpolatedVal) // Ensure non-negative for unsigned types
+		}
+
+		write(speechFrame, table, frame, interpolatedVal)
 	}
 }
 
@@ -1387,15 +1404,19 @@ func trans(a, b byte) byte {
 	return result
 }
 
-func interpolatePitch(speechData *SpeechData, phonemeState *PhonemeState, pos, mem49, phase3 byte) {
+func interpolatePitch(speechFrame *SpeechFrame, phonemeState *PhonemeState, samConfig *SamConfig, pos, mem49, phase3 byte) {
 	// half the width of the current and next phoneme
 	curWidth := phonemeState.PhonemeLengthOutput[pos] / 2
 	nextWidth := phonemeState.PhonemeLengthOutput[pos+1] / 2
 
 	// sum the values
 	width := curWidth + nextWidth
-	pitch := int8(speechData.Pitches[nextWidth+mem49]) - int8(speechData.Pitches[mem49-curWidth])
-	interpolate(speechData, width, 168, phase3, pitch)
+	pitch := speechFrame.Pitches[nextWidth+mem49] - speechFrame.Pitches[mem49-curWidth]
+	if samConfig.Robot {
+		interpolateSmoothly(speechFrame, width, 168, phase3, pitch)
+	} else {
+		interpolate(speechFrame, width, 168, phase3, pitch)
+	}
 }
 
 func abs(x int) int {
@@ -1433,16 +1454,16 @@ func prepareOutput(samState *SamState) {
 	}
 }
 
-func printOutput(flag, f1, f2, f3, a1, a2, a3, p []byte) {
-	fmt.Println("===========================================")
+func printOutput(flag []byte, f1, f2, f3, a1, a2, a3, p []float64) {
+	fmt.Println("================================================================")
 	fmt.Println("Final data for speech output:")
 	fmt.Println()
-	fmt.Println(" flags ampl1 freq1 ampl2 freq2 ampl3 freq3 pitch")
-	fmt.Println("------------------------------------------------")
+	fmt.Println("   flags   ampl1   freq1   ampl2   freq2   ampl3   freq3   pitch")
+	fmt.Println("----------------------------------------------------------------")
 	for i := 0; i < 255; i++ {
-		fmt.Printf("%5d %5d %5d %5d %5d %5d %5d %5d\n", flag[i], a1[i], f1[i], a2[i], f2[i], a3[i], f3[i], p[i])
+		fmt.Printf("%08b %7.2f %7.2f %7.2f %7.2f %7.2f %7.2f %7.2f\n", flag[i], a1[i], f1[i], a2[i], f2[i], a3[i], f3[i], p[i])
 	}
-	fmt.Println("===========================================")
+	fmt.Println("================================================================")
 }
 
 func printPhonemes(phonemeIndex, phonemeLength, stress []byte) {
@@ -1479,7 +1500,7 @@ func printPhonemes(phonemeIndex, phonemeLength, stress []byte) {
 // The processFrames function is where the frames are converted into actual
 // audio samples. This function doesn't process one frame at a time but rather
 // works sample by sample, updating parameters when moving to a new frame.
-func processFrames(speechData *SpeechData, samConfig *SamConfig, audioState *AudioState, remainingFrames byte) {
+func processFrames(speechFrame *SpeechFrame, samConfig *SamConfig, audioState *AudioState, remainingFrames byte) {
 	speedcounter := byte(72)
 	phase1 := byte(0)
 	phase2 := byte(0)
@@ -1488,23 +1509,22 @@ func processFrames(speechData *SpeechData, samConfig *SamConfig, audioState *Aud
 
 	y := byte(0)
 
-	glottalPulseCounter := speechData.Pitches[0]
+	glottalPulseCounter := speechFrame.Pitches[0]
 
 	// Represents the remaining samples in the main (open) phase of the glottal cycle (75% pulse).
-	glottalOpenPhaseSamples := glottalPulseCounter - (glottalPulseCounter >> 2) // glottalPulseCounter * 0.75
-
+	glottalOpenPhaseSamples := math.Round(glottalPulseCounter - (glottalPulseCounter / 4)) // glottalPulseCounter * 0.75
 	for remainingFrames != 0 {
-		flags := speechData.SampledConsonantFlag[y]
+		flags := speechFrame.SampledConsonantFlag[y]
 
 		// unvoiced sampled phoneme?
 		if (flags & 0xF8) != 0 {
-			renderSample(speechData, audioState, &mem66OpenBrace, flags, y)
+			renderSample(speechFrame, audioState, &mem66OpenBrace, flags, y)
 			// skip ahead two in the phoneme buffer
 			y += 2
 			remainingFrames -= 2
 			speedcounter = samConfig.Speed
 		} else {
-			combineGlottalAndFormants(speechData, audioState, phase1, phase2, phase3, y)
+			combineGlottalAndFormants(speechFrame, audioState, phase1, phase2, phase3, y)
 
 			speedcounter--
 			if speedcounter == 0 {
@@ -1518,30 +1538,31 @@ func processFrames(speechData *SpeechData, samConfig *SamConfig, audioState *Aud
 			}
 
 			glottalPulseCounter--
-
-			if glottalPulseCounter != 0 {
+			if math.Trunc(glottalPulseCounter) > 0 {
 				// not finished with a glottal pulse
 				glottalOpenPhaseSamples--
+				glottalOpenPhaseSamples = math.Mod(glottalOpenPhaseSamples+256.0, 256.0)
 				// within the first 75% of the glottal pulse?
 				// is the count non-zero and the sampled flag is zero?
-				if glottalOpenPhaseSamples != 0 || flags == 0 {
+				if math.Trunc(glottalOpenPhaseSamples) > 0 || flags == 0 {
 					// reset the phase of the formants to match the pulse
-					phase1 += speechData.Frequency1[y]
-					phase2 += speechData.Frequency2[y]
-					phase3 += speechData.Frequency3[y]
+					phase1 += byte(speechFrame.Frequency1[y])
+					phase2 += byte(speechFrame.Frequency2[y])
+					phase3 += byte(speechFrame.Frequency3[y])
 					continue
 				}
 
 				// voiced sampled phonemes interleave the sample with the
 				// glottal pulse. The sample flag is non-zero, so render
 				// the sample for the phoneme.
-				renderSample(speechData, audioState, &mem66OpenBrace, flags, y)
+				renderSample(speechFrame, audioState, &mem66OpenBrace, flags, y)
 			}
 		}
-
-		glottalPulseCounter = speechData.Pitches[y]
-		glottalOpenPhaseSamples = glottalPulseCounter - (glottalPulseCounter >> 2) // glottalPulseCounter * 0.75
-
+		if glottalPulseCounter > 0 {
+			glottalPulseCounter = 0
+		}
+		glottalPulseCounter = speechFrame.Pitches[y] + glottalPulseCounter
+		glottalOpenPhaseSamples = glottalPulseCounter - math.Trunc(glottalPulseCounter/4) // glottalPulseCounter * 0.75
 		// reset the formant wave generators to keep them in
 		// sync with the glottal pulse
 		phase1 = 0
@@ -1566,7 +1587,7 @@ func processFrames(speechData *SpeechData, samConfig *SamConfig, audioState *Aud
 func render(samState *SamState) {
 	phonemeState := &samState.Phonemes
 	samConfig := &samState.Config
-	speechData := &samState.Speech
+	speechFrame := &samState.Speech
 	audioState := &samState.Audio
 
 	if phonemeState.PhonemeIndexOutput[0] == 255 {
@@ -1574,28 +1595,28 @@ func render(samState *SamState) {
 	}
 
 	createFrames(samState)
-	t := createTransitions(phonemeState, speechData)
+	t := createTransitions(phonemeState, speechFrame, samConfig)
 
 	if !samConfig.Robot && !samConfig.SingMode {
-		assignPitchContour(speechData, samConfig)
+		assignPitchContour(speechFrame, samConfig)
 	}
-	rescaleAmplitude(speechData)
+	rescaleAmplitude(speechFrame)
 
 	if samConfig.Debug {
-		printOutput(speechData.SampledConsonantFlag, speechData.Frequency1, speechData.Frequency2, speechData.Frequency3, speechData.Amplitude1, speechData.Amplitude2, speechData.Amplitude3, speechData.Pitches)
+		printOutput(speechFrame.SampledConsonantFlag, speechFrame.Frequency1, speechFrame.Frequency2, speechFrame.Frequency3, speechFrame.Amplitude1, speechFrame.Amplitude2, speechFrame.Amplitude3, speechFrame.Pitches)
 	}
 
-	processFrames(speechData, samConfig, audioState, t)
+	processFrames(speechFrame, samConfig, audioState, t)
 }
 
 // RESCALE AMPLITUDE
 //
 // Rescale volume from a linear scale to decibels.
-func rescaleAmplitude(speechData *SpeechData) {
+func rescaleAmplitude(speechFrame *SpeechFrame) {
 	for i := 255; i >= 0; i-- {
-		speechData.Amplitude1[i] = amplitudeRescale[speechData.Amplitude1[i]]
-		speechData.Amplitude2[i] = amplitudeRescale[speechData.Amplitude2[i]]
-		speechData.Amplitude3[i] = amplitudeRescale[speechData.Amplitude3[i]]
+		speechFrame.Amplitude1[i] = float64(amplitudeRescale[int(speechFrame.Amplitude1[i])])
+		speechFrame.Amplitude2[i] = float64(amplitudeRescale[int(speechFrame.Amplitude2[i])])
+		speechFrame.Amplitude3[i] = float64(amplitudeRescale[int(speechFrame.Amplitude3[i])])
 	}
 }
 
@@ -1803,22 +1824,22 @@ func setPhonemeLength(phonemeState *PhonemeState) {
 	}
 }
 
-func write(speechData *SpeechData, p, y, value byte) {
+func write(speechFrame *SpeechFrame, p, y byte, value float64) {
 	switch p {
 	case 168:
-		speechData.Pitches[y] = value
+		speechFrame.Pitches[y] = value
 	case 169:
-		speechData.Frequency1[y] = value
+		speechFrame.Frequency1[y] = value
 	case 170:
-		speechData.Frequency2[y] = value
+		speechFrame.Frequency2[y] = value
 	case 171:
-		speechData.Frequency3[y] = value
+		speechFrame.Frequency3[y] = value
 	case 172:
-		speechData.Amplitude1[y] = value
+		speechFrame.Amplitude1[y] = value
 	case 173:
-		speechData.Amplitude2[y] = value
+		speechFrame.Amplitude2[y] = value
 	case 174:
-		speechData.Amplitude3[y] = value
+		speechFrame.Amplitude3[y] = value
 	default:
 		panic("Error writing to tables")
 	}
@@ -1938,9 +1959,36 @@ func main() {
 				samConfig.Robot = true
 			case "pitch":
 				if i+1 < len(os.Args) {
-					pitch, err := strconv.Atoi(os.Args[i+1])
+					pitch, err := strconv.ParseFloat(os.Args[i+1], 64)
 					if err == nil {
-						samConfig.Pitch = byte(min(pitch, 255))
+						if !samConfig.Robot {
+							pitch = math.Round(pitch)
+						}
+						samConfig.Pitch = min(pitch, 255)
+					}
+					i++
+				}
+			case "frequency":
+				if i+1 < len(os.Args) {
+					frequency, err := strconv.ParseFloat(os.Args[i+1], 64)
+					if err == nil {
+						pitchValue := frequencyToPitch(frequency)
+						if !samConfig.Robot {
+							pitchValue = math.Round(pitchValue)
+						}
+						samConfig.Pitch = min(pitchValue, 255)
+					}
+					i++
+				}
+			case "note":
+				if i+1 < len(os.Args) {
+					note := os.Args[i+1]
+					pitchValue, err := noteToPitch(note)
+					if err == nil {
+						if !samConfig.Robot {
+							pitchValue = math.Round(pitchValue)
+						}
+						samConfig.Pitch = min(pitchValue, 255)
 					}
 					i++
 				}
@@ -2019,6 +2067,33 @@ func main() {
 	}
 }
 
+func frequencyToPitch(frequency float64) float64 {
+	// pitch = (1102500 / frequency / 162
+	return InternalSampleRate / frequency / float64(timetable[0][0])
+}
+
+func noteToPitch(note string) (float64, error) {
+	const A4Frequency = 440
+	note = strings.ToUpper(note)
+	re := regexp.MustCompile(`^([A-G])(#|-)?(\d+)$`)
+	matches := re.FindStringSubmatch(note)
+	if matches == nil {
+		return 0, fmt.Errorf("invalid note format: %s", note)
+	}
+
+	noteName := matches[1]
+	sharp := matches[2] == "#"
+	octave, _ := strconv.Atoi(matches[3])
+	noteIndex := map[string]int{"C": -9, "D": -7, "E": -5, "F": -4, "G": -2, "A": 0, "B": 2}
+	index := noteIndex[noteName]
+	if sharp {
+		index++
+	}
+	semitones := index + (octave-4)*12
+	frequency := A4Frequency * math.Pow(2, float64(semitones)/12.0)
+	return frequencyToPitch(frequency), nil
+}
+
 func nullTerminatedBytesToString(b []byte) string {
 	for i, v := range b {
 		if v == 0 {
@@ -2046,7 +2121,7 @@ func stringConcatenateSafe(dest []byte, size int, str string) {
 
 func initThings(samState *SamState) {
 	phonemeState := &samState.Phonemes
-	speechData := &samState.Speech
+	speechFrame := &samState.Speech
 	audioState := &samState.Audio
 	samConfig := &samState.Config
 
@@ -2057,14 +2132,15 @@ func initThings(samState *SamState) {
 	phonemeState.PhonemeIndexOutput = make([]byte, 60)
 	phonemeState.StressOutput = make([]byte, 60)
 	phonemeState.PhonemeLengthOutput = make([]byte, 60)
-	speechData.Frequency1 = make([]byte, 256)
-	speechData.Frequency2 = make([]byte, 256)
-	speechData.Frequency3 = make([]byte, 256)
-	speechData.Amplitude1 = make([]byte, 256)
-	speechData.Amplitude2 = make([]byte, 256)
-	speechData.Amplitude3 = make([]byte, 256)
-	speechData.SampledConsonantFlag = make([]byte, 256)
-	speechData.Pitches = make([]byte, 256)
+
+	speechFrame.SampledConsonantFlag = make([]byte, 256)
+	speechFrame.Frequency1 = make([]float64, 256)
+	speechFrame.Frequency2 = make([]float64, 256)
+	speechFrame.Frequency3 = make([]float64, 256)
+	speechFrame.Amplitude1 = make([]float64, 256)
+	speechFrame.Amplitude2 = make([]float64, 256)
+	speechFrame.Amplitude3 = make([]float64, 256)
+	speechFrame.Pitches = make([]float64, 256)
 
 	samConfig.Speed = 72
 	samConfig.Pitch = 64
