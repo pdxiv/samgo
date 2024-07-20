@@ -1,4 +1,4 @@
-module github.com/pdxiv/samgo/v2
+module github.com/pdxiv/samgo
 
 go 1.19
 
