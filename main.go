@@ -444,15 +444,15 @@ func renderVoicedSample(audioState *AudioState, hi uint16, off uint8, phase1 uin
 func combineGlottalAndFormants(speechFrame *SpeechFrame, audioState *AudioState, phase1, phase2, phase3, currentFrame uint8) {
 	var tmp uint32
 
-	formant1SineValue := nybbleSine(256, 7, int(phase1))
+	formant1SineValue := sineNybble(256, 7, int(phase1))
 	formant1AmplValue := speechFrame.Amplitude1[currentFrame]
-	formant1Result := nybbleMultiply(formant1AmplValue, formant1SineValue)
+	formant1Result := multiplyNybble(formant1AmplValue, formant1SineValue)
 
 	tmp = uint32(byte(formant1Result))
 
-	formant2SineValue := nybbleSine(256, 7, int(phase2))
+	formant2SineValue := sineNybble(256, 7, int(phase2))
 	formant2AmplValue := speechFrame.Amplitude2[currentFrame]
-	formant2Result := nybbleMultiply(formant2AmplValue, formant2SineValue)
+	formant2Result := multiplyNybble(formant2AmplValue, formant2SineValue)
 
 	tmp += uint32(byte(formant2Result))
 
@@ -460,9 +460,9 @@ func combineGlottalAndFormants(speechFrame *SpeechFrame, audioState *AudioState,
 		tmp += 1
 	}
 
-	formant3SquareValue := nybbleSquare(256, 7, int(phase3))
+	formant3SquareValue := squareNybble(256, 7, int(phase3))
 	formant3AmplValue := speechFrame.Amplitude3[currentFrame]
-	formant3Result := nybbleMultiply(formant3AmplValue, formant3SquareValue)
+	formant3Result := multiplyNybble(formant3AmplValue, formant3SquareValue)
 
 	tmp += uint32(byte(formant3Result))
 
@@ -1646,6 +1646,8 @@ func outputNybble(audioState *AudioState, index int, amplitude byte) {
 	audioState.OldTimeTableIndex = index
 	oversamplingSamples := 1 + (timetable[audioState.OldTimeTableIndex][index]*SampleRate)/InternalSampleRate
 	// Write some samples in advance for oversampling purposes
+
+	fmt.Printf("DEBUG: NybbleAmplitude: %d\n", int8((amplitude&0x0F)*16))
 	for k := 0; k < oversamplingSamples; k++ {
 		audioState.Buffer[int(float64(audioState.BufferPos)/SampleRateConversionDivisor)+k] = (amplitude & 0x0F) * 16
 	}
@@ -2287,7 +2289,7 @@ func handleCh(samState *SamState, ch, mem byte) int {
 	return 0
 }
 
-func NybbleTwosComplementToSigned(value uint8) int8 {
+func nybbleTwosComplementToSigned(value uint8) int8 {
 	if value > 0xF {
 		panic("Value must be a 4-bit unsigned integer (0x0 to 0xF).")
 	}
@@ -2325,7 +2327,7 @@ func NybbleTwosComplementToSigned(value uint8) int8 {
 
 // Emulates sine table
 // Default original value for "period" is 256, "amplitude" is 7
-func nybbleSine(period int, amplitude int, phase int) float64 {
+func sineNybble(period int, amplitude int, phase int) float64 {
 	// Calculate the sine value
 	angle := 2 * math.Pi * float64(phase) / float64(period)
 	sineValue := math.Sin(angle)
@@ -2338,7 +2340,7 @@ func nybbleSine(period int, amplitude int, phase int) float64 {
 
 // Emulates rectangle table
 // Default original value for "period" is 256, "amplitude" is 7
-func nybbleSquare(period int, amplitude int, phase int) float64 {
+func squareNybble(period int, amplitude int, phase int) float64 {
 	truncatedPhase := phase % period
 
 	if truncatedPhase < (period / 2) {
@@ -2348,6 +2350,6 @@ func nybbleSquare(period int, amplitude int, phase int) float64 {
 }
 
 // Emulates original multiplying two nybbles with each other in original code
-func nybbleMultiply(multiplier, multiplicand float64) float64 {
+func multiplyNybble(multiplier, multiplicand float64) float64 {
 	return math.Floor(multiplier * multiplicand / 2)
 }
