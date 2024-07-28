@@ -422,9 +422,9 @@ func renderVoicedSample(audioState *AudioState, hi uint16, off uint8, phase1 uin
 
 		for bit != 0 {
 			if (sample & 0x80) != 0 {
-				output(audioState, 3, 26)
+				outputNybble(audioState, 3, 26)
 			} else {
-				output(audioState, 4, 6)
+				outputNybble(audioState, 4, 6)
 			}
 			sample <<= 1
 			bit--
@@ -440,22 +440,36 @@ func renderVoicedSample(audioState *AudioState, hi uint16, off uint8, phase1 uin
 	return off
 }
 
-func combineGlottalAndFormants(speechFrame *SpeechFrame, audioState *AudioState, phase1, phase2, phase3, Y uint8) {
+// Emulates behavior for orginal code tables for square wave, sine wave and multiplications
+func combineGlottalAndFormants(speechFrame *SpeechFrame, audioState *AudioState, phase1, phase2, phase3, currentFrame uint8) {
 	var tmp uint32
-	tmp = uint32(multtable[sinus[phase1]|byte(speechFrame.Amplitude1[Y])])
-	tmp += uint32(multtable[sinus[phase2]|byte(speechFrame.Amplitude2[Y])])
+
+	formant1SineValue := nybbleSine(256, 7, int(phase1))
+	formant1AmplValue := speechFrame.Amplitude1[currentFrame]
+	formant1Result := nybbleMultiply(formant1AmplValue, formant1SineValue)
+
+	tmp = uint32(byte(formant1Result))
+
+	formant2SineValue := nybbleSine(256, 7, int(phase2))
+	formant2AmplValue := speechFrame.Amplitude2[currentFrame]
+	formant2Result := nybbleMultiply(formant2AmplValue, formant2SineValue)
+
+	tmp += uint32(byte(formant2Result))
 
 	if tmp > 255 {
 		tmp += 1
-	} else {
-		tmp += 0
 	}
 
-	tmp += uint32(multtable[rectangle[phase3]|byte(speechFrame.Amplitude3[Y])])
+	formant3SquareValue := nybbleSquare(256, 7, int(phase3))
+	formant3AmplValue := speechFrame.Amplitude3[currentFrame]
+	formant3Result := nybbleMultiply(formant3AmplValue, formant3SquareValue)
+
+	tmp += uint32(byte(formant3Result))
+
 	tmp += 136
 	tmp >>= 4 // Scale down to 0..15 range of C64 audio.
 
-	output(audioState, 0, uint8(tmp&0xf))
+	outputNybble(audioState, 0, uint8(tmp&0xf))
 }
 
 // Render a sampled sound from the sampleTable.
@@ -509,7 +523,7 @@ func combineGlottalAndFormants(speechFrame *SpeechFrame, audioState *AudioState,
 //	index = (SampledPhonemesTable[i] & 7) - 1;
 //
 // For voices samples, samples are interleaved between voiced output.
-func renderSample(speechFrame *SpeechFrame, audioState *AudioState, mem66OpenBrace *uint8, consonantFlag, mem49 uint8) {
+func renderSample(speechFrame *SpeechFrame, audioState *AudioState, mem66OpenBrace *uint8, consonantFlag, currentFrame uint8) {
 	// mask low three bits and subtract 1 to get value to
 	// convert 0 bits on unvoiced samples.
 	hibyte := (consonantFlag & 0x07) - 1
@@ -526,7 +540,7 @@ func renderSample(speechFrame *SpeechFrame, audioState *AudioState, mem66OpenBra
 	pitchl := consonantFlag & 0xF8
 	if pitchl == 0 {
 		// voiced phoneme: Z*, ZH, V*, DH
-		pitchl = byte(math.Round(speechFrame.Pitches[mem49])) >> 4
+		pitchl = byte(math.Round(speechFrame.Pitches[currentFrame])) >> 4
 		*mem66OpenBrace = renderVoicedSample(audioState, hi, *mem66OpenBrace, pitchl^255)
 	} else {
 		renderUnvoicedSample(audioState, hi, pitchl^255, tab48426[hibyte])
@@ -539,9 +553,9 @@ func renderUnvoicedSample(audioState *AudioState, hi uint16, off, mem53 uint8) {
 		sample := sampleTable[hi+uint16(off)]
 		for bit != 0 {
 			if (sample & 0x80) != 0 {
-				output(audioState, 2, 5)
+				outputNybble(audioState, 2, 5)
 			} else {
-				output(audioState, 1, mem53)
+				outputNybble(audioState, 1, mem53)
 			}
 			sample <<= 1
 			bit--
@@ -1000,15 +1014,27 @@ func createTransitions(phonemeState *PhonemeState, speechFrame *SpeechFrame, sam
 		if ((transition - 2) & 0x80) == 0 {
 
 			interpolatePitch(speechFrame, phonemeState, samConfig, pos, mem49, phase3)
-			for table := uint8(169); table < 175; table++ {
-				// tables: 168: pitches, 169: frequency1, 170: frequency2, 171: frequency3, 172: amplitude1, 173: amplitude2, 174: amplitude3
-				value := read(speechFrame, table, speedcounter) - read(speechFrame, table, phase3)
-				if samConfig.Robot {
-					interpolateSmoothly(speechFrame, transition, table, phase3, value)
-				} else {
-					interpolate(speechFrame, transition, table, phase3, value)
-				}
-			}
+
+			valuePitches := read(speechFrame, Pitches, speedcounter) - read(speechFrame, Pitches, phase3)
+			interpolate(speechFrame, transition, Pitches, phase3, valuePitches, samConfig.Robot)
+
+			valueFrequency1 := read(speechFrame, Frequency1, speedcounter) - read(speechFrame, Frequency1, phase3)
+			interpolate(speechFrame, transition, Frequency1, phase3, valueFrequency1, samConfig.Robot)
+
+			valueFrequency2 := read(speechFrame, Frequency2, speedcounter) - read(speechFrame, Frequency2, phase3)
+			interpolate(speechFrame, transition, Frequency2, phase3, valueFrequency2, samConfig.Robot)
+
+			valueFrequency3 := read(speechFrame, Frequency3, speedcounter) - read(speechFrame, Frequency3, phase3)
+			interpolate(speechFrame, transition, Frequency3, phase3, valueFrequency3, samConfig.Robot)
+
+			valueAmplitude1 := read(speechFrame, Amplitude1, speedcounter) - read(speechFrame, Amplitude1, phase3)
+			interpolate(speechFrame, transition, Amplitude1, phase3, valueAmplitude1, samConfig.Robot)
+
+			valueAmplitude2 := read(speechFrame, Amplitude2, speedcounter) - read(speechFrame, Amplitude2, phase3)
+			interpolate(speechFrame, transition, Amplitude2, phase3, valueAmplitude2, samConfig.Robot)
+
+			valueAmplitude3 := read(speechFrame, Amplitude3, speedcounter) - read(speechFrame, Amplitude3, phase3)
+			interpolate(speechFrame, transition, Amplitude3, phase3, valueAmplitude3, samConfig.Robot)
 		}
 		pos++
 	}
@@ -1027,22 +1053,22 @@ func getRuleByte(mem62 uint16, y byte) byte {
 	return rules[address+int(y)]
 }
 
-func read(speechFrame *SpeechFrame, p, y byte) float64 {
+func read(speechFrame *SpeechFrame, p, currentFrame byte) float64 {
 	switch p {
-	case 168:
-		return speechFrame.Pitches[y]
-	case 169:
-		return speechFrame.Frequency1[y]
-	case 170:
-		return speechFrame.Frequency2[y]
-	case 171:
-		return speechFrame.Frequency3[y]
-	case 172:
-		return speechFrame.Amplitude1[y]
-	case 173:
-		return speechFrame.Amplitude2[y]
-	case 174:
-		return speechFrame.Amplitude3[y]
+	case Pitches:
+		return speechFrame.Pitches[currentFrame]
+	case Frequency1:
+		return speechFrame.Frequency1[currentFrame]
+	case Frequency2:
+		return speechFrame.Frequency2[currentFrame]
+	case Frequency3:
+		return speechFrame.Frequency3[currentFrame]
+	case Amplitude1:
+		return speechFrame.Amplitude1[currentFrame]
+	case Amplitude2:
+		return speechFrame.Amplitude2[currentFrame]
+	case Amplitude3:
+		return speechFrame.Amplitude3[currentFrame]
 	default:
 		panic("Error reading from tables")
 	}
@@ -1051,30 +1077,30 @@ func read(speechFrame *SpeechFrame, p, y byte) float64 {
 // Create a rising or falling inflection 30 frames prior to
 // index X. A rising inflection is used for questions, and
 // a falling inflection is used for statements.
-func addInflection(speechFrame *SpeechFrame, samConfig *SamConfig, inflection, pos byte) {
-	end := pos
+func addInflection(speechFrame *SpeechFrame, samConfig *SamConfig, inflection, currentFrame byte) {
+	end := currentFrame
 
-	if pos < 30 {
-		pos = 0
+	if currentFrame < 30 {
+		currentFrame = 0
 	} else {
-		pos -= 30
+		currentFrame -= 30
 	}
 
 	var a float64
-	for speechFrame.Pitches[pos] == 127 {
-		pos++
+	for speechFrame.Pitches[currentFrame] == 127 {
+		currentFrame++
 	}
-	a = speechFrame.Pitches[pos]
+	a = speechFrame.Pitches[currentFrame]
 
-	for pos != end {
+	for currentFrame != end {
 		a += float64(inflection)
-		speechFrame.Pitches[pos] = a
+		speechFrame.Pitches[currentFrame] = a
 		for {
-			pos++
-			if pos == end {
+			currentFrame++
+			if currentFrame == end {
 				break // Exit loop if we've reached the end
 			}
-			if speechFrame.Pitches[pos] != 255 {
+			if speechFrame.Pitches[currentFrame] != 255 {
 				break // Exit loop if we've found a non-255 pitch
 			}
 		}
@@ -1356,46 +1382,45 @@ func insert(phonemeState *PhonemeState, position, mem60InputMatchPos, mem59, mem
 	phonemeState.Stress[position] = mem58Variant
 }
 
-func interpolate(speechFrame *SpeechFrame, width, table, frame byte, interpolationValue float64) {
+func interpolate(speechFrame *SpeechFrame, width, table, frame byte, interpolationValue float64, smoothly bool) {
 	sign := interpolationValue < 0
-	remainder := byte(abs(int(interpolationValue))) % width
-	div := uint8(int(interpolationValue) / int(width))
-	error := byte(0)
-	val := uint8(math.Round(read(speechFrame, table, frame))) + div
+	if smoothly {
+		absInterpolationValue := math.Abs(interpolationValue)
+		step := absInterpolationValue / float64(width)
 
-	for pos := width - 1; pos > 0; pos-- {
-		error += remainder
-		if error >= width { // accumulated a whole integer error, so adjust output
-			error -= width
+		startVal := read(speechFrame, table, frame)
+
+		for pos := width - 1; pos > 0; pos-- {
+			frame++
+			interpolatedVal := startVal + step*float64(width-pos)
+
 			if sign {
-				val--
-			} else if val != 0 {
-				val++ // if input is 0, we always leave it alone
+				interpolatedVal = startVal - step*float64(width-pos)
+				interpolatedVal = math.Max(0, interpolatedVal) // Ensure non-negative for unsigned types
 			}
+
+			write(speechFrame, table, frame, interpolatedVal)
 		}
-		frame++
-		write(speechFrame, table, frame, float64(val)) // Write updated value back to next frame.
-		val += div
-	}
-}
+	} else {
+		remainder := byte(abs(int(interpolationValue))) % width
+		div := uint8(int(interpolationValue) / int(width))
+		error := byte(0)
+		val := uint8(math.Round(read(speechFrame, table, frame))) + div
 
-func interpolateSmoothly(speechFrame *SpeechFrame, width, table, frame byte, interpolationValue float64) {
-	sign := interpolationValue < 0
-	absInterpolationValue := math.Abs(interpolationValue)
-	step := absInterpolationValue / float64(width)
-
-	startVal := read(speechFrame, table, frame)
-
-	for pos := width - 1; pos > 0; pos-- {
-		frame++
-		interpolatedVal := startVal + step*float64(width-pos)
-
-		if sign {
-			interpolatedVal = startVal - step*float64(width-pos)
-			interpolatedVal = math.Max(0, interpolatedVal) // Ensure non-negative for unsigned types
+		for pos := width - 1; pos > 0; pos-- {
+			error += remainder
+			if error >= width { // accumulated a whole integer error, so adjust output
+				error -= width
+				if sign {
+					val--
+				} else if val != 0 {
+					val++ // if input is 0, we always leave it alone
+				}
+			}
+			frame++
+			write(speechFrame, table, frame, float64(val)) // Write updated value back to next frame.
+			val += div
 		}
-
-		write(speechFrame, table, frame, interpolatedVal)
 	}
 }
 
@@ -1412,11 +1437,7 @@ func interpolatePitch(speechFrame *SpeechFrame, phonemeState *PhonemeState, samC
 	// sum the values
 	width := curWidth + nextWidth
 	pitch := speechFrame.Pitches[nextWidth+mem49] - speechFrame.Pitches[mem49-curWidth]
-	if samConfig.Robot {
-		interpolateSmoothly(speechFrame, width, 168, phase3, pitch)
-	} else {
-		interpolate(speechFrame, width, 168, phase3, pitch)
-	}
+	interpolate(speechFrame, width, Pitches, phase3, pitch, samConfig.Robot)
 }
 
 func abs(x int) int {
@@ -1507,28 +1528,28 @@ func processFrames(speechFrame *SpeechFrame, samConfig *SamConfig, audioState *A
 	phase3 := byte(0)
 	mem66OpenBrace := byte(0)
 
-	y := byte(0)
+	currentFrame := byte(0)
 
 	glottalPulseCounter := speechFrame.Pitches[0]
 
 	// Represents the remaining samples in the main (open) phase of the glottal cycle (75% pulse).
 	glottalOpenPhaseSamples := math.Round(glottalPulseCounter - (glottalPulseCounter / 4)) // glottalPulseCounter * 0.75
 	for remainingFrames != 0 {
-		flags := speechFrame.SampledConsonantFlag[y]
+		flags := speechFrame.SampledConsonantFlag[currentFrame]
 
 		// unvoiced sampled phoneme?
 		if (flags & 0xF8) != 0 {
-			renderSample(speechFrame, audioState, &mem66OpenBrace, flags, y)
+			renderSample(speechFrame, audioState, &mem66OpenBrace, flags, currentFrame)
 			// skip ahead two in the phoneme buffer
-			y += 2
+			currentFrame += 2
 			remainingFrames -= 2
 			speedcounter = samConfig.Speed
 		} else {
-			combineGlottalAndFormants(speechFrame, audioState, phase1, phase2, phase3, y)
+			combineGlottalAndFormants(speechFrame, audioState, phase1, phase2, phase3, currentFrame)
 
 			speedcounter--
 			if speedcounter == 0 {
-				y++ // go to next amplitude
+				currentFrame++ // go to next amplitude
 				// decrement the frame count
 				remainingFrames--
 				if remainingFrames == 0 {
@@ -1546,22 +1567,22 @@ func processFrames(speechFrame *SpeechFrame, samConfig *SamConfig, audioState *A
 				// is the count non-zero and the sampled flag is zero?
 				if math.Trunc(glottalOpenPhaseSamples) > 0 || flags == 0 {
 					// reset the phase of the formants to match the pulse
-					phase1 += byte(speechFrame.Frequency1[y])
-					phase2 += byte(speechFrame.Frequency2[y])
-					phase3 += byte(speechFrame.Frequency3[y])
+					phase1 += byte(speechFrame.Frequency1[currentFrame])
+					phase2 += byte(speechFrame.Frequency2[currentFrame])
+					phase3 += byte(speechFrame.Frequency3[currentFrame])
 					continue
 				}
 
 				// voiced sampled phonemes interleave the sample with the
 				// glottal pulse. The sample flag is non-zero, so render
 				// the sample for the phoneme.
-				renderSample(speechFrame, audioState, &mem66OpenBrace, flags, y)
+				renderSample(speechFrame, audioState, &mem66OpenBrace, flags, currentFrame)
 			}
 		}
 		if glottalPulseCounter > 0 {
 			glottalPulseCounter = 0
 		}
-		glottalPulseCounter = speechFrame.Pitches[y] + glottalPulseCounter
+		glottalPulseCounter = speechFrame.Pitches[currentFrame] + glottalPulseCounter
 		glottalOpenPhaseSamples = glottalPulseCounter - math.Trunc(glottalPulseCounter/4) // glottalPulseCounter * 0.75
 		// reset the formant wave generators to keep them in
 		// sync with the glottal pulse
@@ -1620,7 +1641,7 @@ func rescaleAmplitude(speechFrame *SpeechFrame) {
 	}
 }
 
-func output(audioState *AudioState, index int, amplitude byte) {
+func outputNybble(audioState *AudioState, index int, amplitude byte) {
 	audioState.BufferPos += timetable[audioState.OldTimeTableIndex][index]
 	audioState.OldTimeTableIndex = index
 	oversamplingSamples := 1 + (timetable[audioState.OldTimeTableIndex][index]*SampleRate)/InternalSampleRate
@@ -1824,22 +1845,22 @@ func setPhonemeLength(phonemeState *PhonemeState) {
 	}
 }
 
-func write(speechFrame *SpeechFrame, p, y byte, value float64) {
+func write(speechFrame *SpeechFrame, p, currentFrame byte, value float64) {
 	switch p {
-	case 168:
-		speechFrame.Pitches[y] = value
-	case 169:
-		speechFrame.Frequency1[y] = value
-	case 170:
-		speechFrame.Frequency2[y] = value
-	case 171:
-		speechFrame.Frequency3[y] = value
-	case 172:
-		speechFrame.Amplitude1[y] = value
-	case 173:
-		speechFrame.Amplitude2[y] = value
-	case 174:
-		speechFrame.Amplitude3[y] = value
+	case Pitches:
+		speechFrame.Pitches[currentFrame] = value
+	case Frequency1:
+		speechFrame.Frequency1[currentFrame] = value
+	case Frequency2:
+		speechFrame.Frequency2[currentFrame] = value
+	case Frequency3:
+		speechFrame.Frequency3[currentFrame] = value
+	case Amplitude1:
+		speechFrame.Amplitude1[currentFrame] = value
+	case Amplitude2:
+		speechFrame.Amplitude2[currentFrame] = value
+	case Amplitude3:
+		speechFrame.Amplitude3[currentFrame] = value
 	default:
 		panic("Error writing to tables")
 	}
@@ -2264,4 +2285,73 @@ func handleCh(samState *SamState, ch, mem byte) int {
 		return -1
 	}
 	return 0
+}
+
+func NybbleTwosComplementToSigned(value uint8) int8 {
+	if value > 0xF {
+		panic("Value must be a 4-bit unsigned integer (0x0 to 0xF).")
+	}
+
+	// Convert the value to a 4-bit binary string
+	binaryStr := fmt.Sprintf("%04b", value)
+
+	// Check the sign bit (most significant bit)
+	if binaryStr[0] == '0' {
+		// Positive number or zero, return the value as is
+		decimalValue, _ := strconv.ParseInt(binaryStr, 2, 8)
+		return int8(decimalValue)
+	} else {
+		// Negative number, convert from two's complement
+		// Invert the bits
+		invertedBits := ""
+		for _, bit := range binaryStr {
+			if bit == '0' {
+				invertedBits += "1"
+			} else {
+				invertedBits += "0"
+			}
+		}
+
+		// Convert inverted bits to an integer
+		invertedValue, _ := strconv.ParseInt(invertedBits, 2, 8)
+
+		// Add 1 to the inverted value
+		magnitude := invertedValue + 1
+
+		// Return the negative value
+		return int8(-magnitude)
+	}
+}
+
+// Emulates sine table
+// Default original value for "period" is 256, "amplitude" is 7
+func nybbleSine(period int, amplitude int, phase int) float64 {
+	// Calculate the sine value
+	angle := 2 * math.Pi * float64(phase) / float64(period)
+	sineValue := math.Sin(angle)
+
+	// Scale the sine value to the desired amplitude
+	scaledValue := int(math.Round(sineValue * float64(amplitude)))
+
+	return float64(scaledValue)
+}
+
+// Emulates rectangle table
+// Default original value for "period" is 256, "amplitude" is 7
+func nybbleSquare(period int, amplitude int, phase int) float64 {
+	truncatedPhase := phase % period
+
+	if truncatedPhase < (period / 2) {
+		return float64(amplitude * -1)
+	}
+	return float64(amplitude)
+}
+
+// Emulates original multiplying two nybbles with each other in original code
+func nybbleMultiply(multiplier, multiplicand float64) float64 {
+	product := (multiplier * multiplicand) / 2
+	if product < 0 {
+		product -= 0.5
+	}
+	return float64(int(product))
 }
