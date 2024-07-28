@@ -2349,9 +2349,5 @@ func nybbleSquare(period int, amplitude int, phase int) float64 {
 
 // Emulates original multiplying two nybbles with each other in original code
 func nybbleMultiply(multiplier, multiplicand float64) float64 {
-	product := (multiplier * multiplicand) / 2
-	if product < 0 {
-		product -= 0.5
-	}
-	return float64(int(product))
+	return math.Floor(multiplier * multiplicand / 2)
 }
