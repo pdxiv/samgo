@@ -10,6 +10,7 @@ type SamConfig struct {
 	SingMode bool
 	Debug    bool
 	Robot    bool
+	Hifi     bool
 }
 
 type AudioState struct {

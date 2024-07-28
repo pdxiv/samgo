@@ -440,8 +440,35 @@ func renderVoicedSample(audioState *AudioState, hi uint16, off uint8, phase1 uin
 	return off
 }
 
+// Enhanced floating point version of orginal function
+func combineGlottalAndFormantsFloat(speechFrame *SpeechFrame, audioState *AudioState, phase1, phase2, phase3, currentFrame uint8) {
+	var tmp float64
+
+	formant1SineValue := sineFloat(256, 7, int(phase1))
+	formant1AmplValue := speechFrame.Amplitude1[currentFrame]
+	formant1Result := formant1AmplValue * formant1SineValue / 2
+
+	tmp = formant1Result
+
+	formant2SineValue := sineFloat(256, 7, int(phase2))
+	formant2AmplValue := speechFrame.Amplitude2[currentFrame]
+	formant2Result := formant2AmplValue * formant2SineValue / 2
+
+	tmp += formant2Result
+
+	formant3SquareValue := square(256, 7, int(phase3))
+	formant3AmplValue := speechFrame.Amplitude3[currentFrame]
+	formant3Result := formant3AmplValue * formant3SquareValue / 2
+
+	tmp += formant3Result
+
+	tmp = tmp / 16
+
+	outputFloat(audioState, 0, tmp)
+}
+
 // Emulates behavior for orginal code tables for square wave, sine wave and multiplications
-func combineGlottalAndFormants(speechFrame *SpeechFrame, audioState *AudioState, phase1, phase2, phase3, currentFrame uint8) {
+func combineGlottalAndFormantsNybble(speechFrame *SpeechFrame, audioState *AudioState, phase1, phase2, phase3, currentFrame uint8) {
 	var tmp uint32
 
 	formant1SineValue := sineNybble(256, 7, int(phase1))
@@ -460,7 +487,7 @@ func combineGlottalAndFormants(speechFrame *SpeechFrame, audioState *AudioState,
 		tmp += 1
 	}
 
-	formant3SquareValue := squareNybble(256, 7, int(phase3))
+	formant3SquareValue := square(256, 7, int(phase3))
 	formant3AmplValue := speechFrame.Amplitude3[currentFrame]
 	formant3Result := multiplyNybble(formant3AmplValue, formant3SquareValue)
 
@@ -1545,7 +1572,11 @@ func processFrames(speechFrame *SpeechFrame, samConfig *SamConfig, audioState *A
 			remainingFrames -= 2
 			speedcounter = samConfig.Speed
 		} else {
-			combineGlottalAndFormants(speechFrame, audioState, phase1, phase2, phase3, currentFrame)
+			if samConfig.Hifi {
+				combineGlottalAndFormantsFloat(speechFrame, audioState, phase1, phase2, phase3, currentFrame)
+			} else {
+				combineGlottalAndFormantsNybble(speechFrame, audioState, phase1, phase2, phase3, currentFrame)
+			}
 
 			speedcounter--
 			if speedcounter == 0 {
@@ -1641,13 +1672,24 @@ func rescaleAmplitude(speechFrame *SpeechFrame) {
 	}
 }
 
+func outputFloat(audioState *AudioState, index int, amplitude float64) {
+	outputAmplitude := byte(128 + (math.Round(amplitude * 16)))
+	audioState.BufferPos += timetable[audioState.OldTimeTableIndex][index]
+	audioState.OldTimeTableIndex = index
+	oversamplingSamples := 1 + (timetable[audioState.OldTimeTableIndex][index]*SampleRate)/InternalSampleRate
+	// Write some samples in advance for oversampling purposes
+
+	for k := 0; k < oversamplingSamples; k++ {
+		audioState.Buffer[int(float64(audioState.BufferPos)/SampleRateConversionDivisor)+k] = outputAmplitude
+	}
+}
+
 func outputNybble(audioState *AudioState, index int, amplitude byte) {
 	audioState.BufferPos += timetable[audioState.OldTimeTableIndex][index]
 	audioState.OldTimeTableIndex = index
 	oversamplingSamples := 1 + (timetable[audioState.OldTimeTableIndex][index]*SampleRate)/InternalSampleRate
 	// Write some samples in advance for oversampling purposes
 
-	fmt.Printf("DEBUG: NybbleAmplitude: %d\n", int8((amplitude&0x0F)*16))
 	for k := 0; k < oversamplingSamples; k++ {
 		audioState.Buffer[int(float64(audioState.BufferPos)/SampleRateConversionDivisor)+k] = (amplitude & 0x0F) * 16
 	}
@@ -1980,6 +2022,8 @@ func main() {
 				samConfig.Debug = true
 			case "robot":
 				samConfig.Robot = true
+			case "hifi":
+				samConfig.Hifi = true
 			case "pitch":
 				if i+1 < len(os.Args) {
 					pitch, err := strconv.ParseFloat(os.Args[i+1], 64)
@@ -2325,6 +2369,19 @@ func nybbleTwosComplementToSigned(value uint8) int8 {
 	}
 }
 
+// "Enhanced quality" emulation of sine table
+// Default original value for "period" is 256, "amplitude" is 7
+func sineFloat(period int, amplitude int, phase int) float64 {
+	// Calculate the sine value
+	angle := 2 * math.Pi * float64(phase) / float64(period)
+	sineValue := math.Sin(angle)
+
+	// Scale the sine value to the desired amplitude
+	scaledValue := sineValue * float64(amplitude)
+
+	return float64(scaledValue)
+}
+
 // Emulates sine table
 // Default original value for "period" is 256, "amplitude" is 7
 func sineNybble(period int, amplitude int, phase int) float64 {
@@ -2340,7 +2397,7 @@ func sineNybble(period int, amplitude int, phase int) float64 {
 
 // Emulates rectangle table
 // Default original value for "period" is 256, "amplitude" is 7
-func squareNybble(period int, amplitude int, phase int) float64 {
+func square(period int, amplitude int, phase int) float64 {
 	truncatedPhase := phase % period
 
 	if truncatedPhase < (period / 2) {
