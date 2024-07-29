@@ -415,6 +415,27 @@ func textToPhonemes(samState *SamState, input []byte) bool {
 	}
 }
 
+func renderUnvoicedSample(audioState *AudioState, hi uint16, off, amplitude uint8) {
+	for {
+		bit := uint8(8)
+		sample := sampleTable[hi+uint16(off)]
+		for bit != 0 {
+			if (sample & 0x80) != 0 {
+				outputNybble(audioState, 2, 5)
+
+			} else {
+				outputNybble(audioState, 1, amplitude)
+			}
+			sample <<= 1
+			bit--
+		}
+		off++
+		if off == 0 {
+			break
+		}
+	}
+}
+
 func renderVoicedSample(audioState *AudioState, hi uint16, off uint8, phase1 uint8) uint8 {
 	for {
 		bit := uint8(8)
@@ -570,27 +591,7 @@ func renderSample(speechFrame *SpeechFrame, audioState *AudioState, mem66OpenBra
 		pitchl = byte(math.Round(speechFrame.Pitches[currentFrame])) >> 4
 		*mem66OpenBrace = renderVoicedSample(audioState, hi, *mem66OpenBrace, pitchl^255)
 	} else {
-		renderUnvoicedSample(audioState, hi, pitchl^255, tab48426[hibyte])
-	}
-}
-
-func renderUnvoicedSample(audioState *AudioState, hi uint16, off, mem53 uint8) {
-	for {
-		bit := uint8(8)
-		sample := sampleTable[hi+uint16(off)]
-		for bit != 0 {
-			if (sample & 0x80) != 0 {
-				outputNybble(audioState, 2, 5)
-			} else {
-				outputNybble(audioState, 1, mem53)
-			}
-			sample <<= 1
-			bit--
-		}
-		off++
-		if off == 0 {
-			break
-		}
+		renderUnvoicedSample(audioState, hi, pitchl^255, unvoicedAmplitude[hibyte])
 	}
 }
 
@@ -1690,8 +1691,9 @@ func outputNybble(audioState *AudioState, index int, amplitude byte) {
 	oversamplingSamples := 1 + (timetable[audioState.OldTimeTableIndex][index]*SampleRate)/InternalSampleRate
 	// Write some samples in advance for oversampling purposes
 
+	bufferPosition := int(float64(audioState.BufferPos) / SampleRateConversionDivisor)
 	for k := 0; k < oversamplingSamples; k++ {
-		audioState.Buffer[int(float64(audioState.BufferPos)/SampleRateConversionDivisor)+k] = (amplitude & 0x0F) * 16
+		audioState.Buffer[bufferPosition+k] = (amplitude & 0x0F) * 16
 	}
 }
 
