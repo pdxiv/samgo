@@ -20,6 +20,10 @@ type AudioState struct {
 	Buffer            []byte
 	BufferPos         int
 	OldTimeTableIndex int
+
+	// Used for "filling in gaps" in output audio buffer.
+	LastSampleAmplitude byte
+	LastSampleLocation  int
 }
 
 type PhonemeState struct {

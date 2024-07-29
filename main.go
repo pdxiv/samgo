@@ -1677,24 +1677,31 @@ func outputFloat(audioState *AudioState, index int, amplitude float64) {
 	outputAmplitude := byte(128 + (math.Round(amplitude * 16)))
 	audioState.BufferPos += timetable[audioState.OldTimeTableIndex][index]
 	audioState.OldTimeTableIndex = index
-	oversamplingSamples := 1 + (timetable[audioState.OldTimeTableIndex][index]*SampleRate)/InternalSampleRate
-	// Write some samples in advance for oversampling purposes
 
-	for k := 0; k < oversamplingSamples; k++ {
-		audioState.Buffer[int(float64(audioState.BufferPos)/SampleRateConversionDivisor)+k] = outputAmplitude
+	// Fill in blank samples
+	bufferPosition := int(float64(audioState.BufferPos) / SampleRateConversionDivisor)
+	for k := audioState.LastSampleLocation; k < bufferPosition; k++ {
+		audioState.Buffer[k] = byte(audioState.LastSampleAmplitude)
 	}
+	audioState.LastSampleLocation = bufferPosition
+	audioState.LastSampleAmplitude = outputAmplitude
+
+	audioState.Buffer[int(float64(audioState.BufferPos)/SampleRateConversionDivisor)] = outputAmplitude
 }
 
 func outputNybble(audioState *AudioState, index int, amplitude byte) {
 	audioState.BufferPos += timetable[audioState.OldTimeTableIndex][index]
 	audioState.OldTimeTableIndex = index
-	oversamplingSamples := 1 + (timetable[audioState.OldTimeTableIndex][index]*SampleRate)/InternalSampleRate
-	// Write some samples in advance for oversampling purposes
 
+	// Fill in blank samples
 	bufferPosition := int(float64(audioState.BufferPos) / SampleRateConversionDivisor)
-	for k := 0; k < oversamplingSamples; k++ {
-		audioState.Buffer[bufferPosition+k] = (amplitude & 0x0F) * 16
+	for k := audioState.LastSampleLocation; k < bufferPosition; k++ {
+		audioState.Buffer[k] = byte(audioState.LastSampleAmplitude)
 	}
+	audioState.LastSampleLocation = bufferPosition
+	audioState.LastSampleAmplitude = (amplitude & 0x0F) * 16
+
+	audioState.Buffer[bufferPosition] = (amplitude & 0x0F) * 16
 }
 
 func printUsage() {
@@ -1981,7 +1988,8 @@ func writeWav(filename string, buffer []byte, bufferLength int) error {
 		return fmt.Errorf("failed to write data length: %v", err)
 	}
 
-	buffer = buffer[:bufferLength] // Dirty workaround. Truncate the 10 second buffer
+	// buffer = buffer[:bufferLength] // Dirty workaround. Truncate the 10 second buffer
+
 	if _, err := file.Write(buffer); err != nil {
 		return fmt.Errorf("failed to write audio data: %v", err)
 	}
@@ -2222,6 +2230,9 @@ func initThings(samState *SamState) {
 	audioState.BufferPos = 0
 	audioState.OldTimeTableIndex = 0
 	audioState.Buffer = make([]byte, SampleRate*10)
+
+	audioState.LastSampleAmplitude = 128
+	audioState.LastSampleLocation = 0
 
 	setMouthThroat(samConfig.Mouth, samConfig.Throat)
 
