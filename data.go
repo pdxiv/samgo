@@ -3,7 +3,7 @@ package main
 import "github.com/ebitengine/oto/v3"
 
 type SamConfig struct {
-	Speed    byte
+	Speed    float64
 	Pitch    float64
 	Mouth    byte
 	Throat   byte

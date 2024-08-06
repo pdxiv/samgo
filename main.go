@@ -1550,7 +1550,7 @@ func printPhonemes(phonemeIndex, phonemeLength, stress []byte) {
 // audio samples. This function doesn't process one frame at a time but rather
 // works sample by sample, updating parameters when moving to a new frame.
 func processFrames(speechFrame *SpeechFrame, samConfig *SamConfig, audioState *AudioState, remainingFrames byte) {
-	speedcounter := byte(72)
+	speedcounter := samConfig.Speed
 	phase1 := byte(0)
 	phase2 := byte(0)
 	phase3 := byte(0)
@@ -1580,14 +1580,14 @@ func processFrames(speechFrame *SpeechFrame, samConfig *SamConfig, audioState *A
 			}
 
 			speedcounter--
-			if speedcounter == 0 {
+			if speedcounter <= 0 {
 				currentFrame++ // go to next amplitude
 				// decrement the frame count
 				remainingFrames--
 				if remainingFrames == 0 {
 					return
 				}
-				speedcounter = samConfig.Speed
+				speedcounter += samConfig.Speed
 			}
 
 			glottalPulseCounter--
@@ -2071,9 +2071,9 @@ func main() {
 				}
 			case "speed":
 				if i+1 < len(os.Args) {
-					speed, err := strconv.Atoi(os.Args[i+1])
+					speed, err := strconv.ParseFloat(os.Args[i+1], 64)
 					if err == nil {
-						samConfig.Speed = byte(min(speed, 255))
+						samConfig.Speed = min(speed, 255)
 					}
 					i++
 				}
