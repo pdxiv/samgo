@@ -13,8 +13,6 @@ SAM (Software Automatic Mouth) is a vintage text-to-speech engine originally dev
 * WAV file output
 * Debug mode for detailed processing information
 
-```markdown
-
 ## Installation
 
 To install SAM, ensure you have Go installed on your system, then run the following:
@@ -48,32 +46,25 @@ After installation, you may need to ensure the Go bin directory is in your syste
    Look for the Go bin directory in the output.
 
 3. If it's not in your PATH, add it:
-
    - For Bash (Linux/macOS), add this line to your `~/.bashrc` or `~/.bash_profile` :
-
-     
 
 ```bash
      export PATH=$PATH:$(go env GOPATH)/bin
-     ```
+   ```
 
    - For Zsh (macOS), add the same line to `~/.zshrc` :
 
-     
-
 ```bash
      export PATH=$PATH:$(go env GOPATH)/bin
-     ```
+   ```
 
    - For Windows (PowerShell), add this to your PowerShell profile:
 
-     
-
 ```powershell
      $env:Path += ";$(go env GOPATH)\bin"
-     ```
+   ```
 
-4. After modifying your shell configuration, restart your terminal or run `source` on the modified file (e.g.,   `source ~/.bashrc`) to apply the changes.
+4. After modifying your shell configuration, restart your terminal or run `source` on the modified file (e.g.,       `source ~/.bashrc`) to apply the changes.
 
 5. Verify the installation by running:
    
@@ -122,6 +113,7 @@ The Go port of SAM is functional with the following notes:
 
 * All core features from the original SAM have been implemented.
 * WAV file output works correctly.
+* Tuning of voiced consonants is off, due to excessive quantization.
 * Direct audio output is functional but may sound slightly garbled compared to the WAV output.
 
 ## Acknowledgments
