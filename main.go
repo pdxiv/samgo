@@ -2129,6 +2129,8 @@ func main() {
 
 	var err error
 
+	trimAudioBuffer(&audioState.Buffer)
+
 	if wavFilename != "" {
 		err = writeWav(wavFilename, audioState.Buffer, int(float64(audioState.BufferPos)/SampleRateConversionDivisor))
 	} else {
@@ -2142,6 +2144,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to open log file: %v", err)
 	}
+}
+
+// Trim trailing zeroes from the end of the allocated audio buffer
+func trimAudioBuffer(buffer *[]byte) {
+
+	// Find the last non-zero value
+	newLength := len(*buffer)
+	for i := len(*buffer) - 1; i >= 0; i-- {
+		if (*buffer)[i] != 0 {
+			newLength = i + 1
+			break
+		}
+	}
+	*buffer = (*buffer)[:newLength] // Shorten the existing slice
 }
 
 func frequencyToPitch(frequency float64) float64 {
