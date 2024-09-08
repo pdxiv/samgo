@@ -437,28 +437,32 @@ func renderUnvoicedSample(audioState *AudioState, hi uint16, off, amplitude uint
 }
 
 func renderVoicedSample(audioState *AudioState, hi uint16, off uint8, phase1 uint8) uint8 {
-	for {
-		bit := uint8(8)
+	for phase1 != 0 {
 		sample := sampleTable[hi+uint16(off)]
-
-		for bit != 0 {
-			if (sample & 0x80) != 0 {
-				outputNybble(audioState, 3, 26)
-			} else {
-				outputNybble(audioState, 4, 6)
-			}
-			sample <<= 1
-			bit--
-		}
-
+		processSample(audioState, sample)
 		off++
 		phase1++
-
-		if phase1 == 0 {
-			break
-		}
 	}
 	return off
+}
+
+func processSample(audioState *AudioState, sample uint8) {
+	const bitsPerSample = 8
+	const setNybble = 3
+	const setAmplitude = 26
+	const unsetNybble = 4
+	const unsetAmplitude = 6
+	const highBitMask = 0x80
+
+	for bitPosition := bitsPerSample; bitPosition > 0; bitPosition-- {
+		highBitSet := (sample & highBitMask) != 0
+		if highBitSet {
+			outputNybble(audioState, setNybble, setAmplitude)
+		} else {
+			outputNybble(audioState, unsetNybble, unsetAmplitude)
+		}
+		sample <<= 1
+	}
 }
 
 // Enhanced floating point version of orginal function
@@ -849,10 +853,14 @@ func parser2(samConfig *SamConfig, phonemeState *PhonemeState) {
 	} // for
 }
 
-func samMain(samState *SamState) bool {
+func generateBuffer(samState *SamState) bool {
 	samConfig := &samState.Config
 	phonemeState := &samState.Phonemes
 	inputState := &samState.Input
+	audioState := &samState.Audio
+
+	audioState.BufferPos = 0
+	audioState.Buffer = make([]byte, SampleRate*10)
 
 	if !parser1(phonemeState, inputState) {
 		return false
@@ -877,6 +885,51 @@ func samMain(samState *SamState) bool {
 		printPhonemes(phonemeState.PhonemeIndex, phonemeState.PhonemeLength, phonemeState.Stress)
 	}
 	prepareOutput(samState)
+
+	trimAudioBuffer(&audioState.Buffer)
+	return true
+}
+
+func samMain(samState *SamState) bool {
+	samConfig := &samState.Config
+	audioState := &samState.Audio
+
+	// If there is a target length set, attempt to figure out what the closest speed setting is.
+	if samConfig.Length > 0 {
+		targetLength := int(math.Round(samConfig.Length * float64(audioState.SampleRate)))
+		lowerThanValue := 255.0
+		higherThanValue := 0.0
+
+		bufferLength := 0
+		epsilon := 1e-6 // Define a small tolerance
+
+		for !(!(math.Abs(lowerThanValue-higherThanValue) > epsilon) && !(bufferLength > targetLength)) {
+
+			if !generateBuffer(samState) {
+				return false
+			}
+
+			bufferLength = len(audioState.Buffer)
+			if bufferLength < targetLength {
+				higherThanValue = samConfig.Speed
+				samConfig.Speed = (higherThanValue + lowerThanValue) / 2
+			} else {
+				lowerThanValue = samConfig.Speed
+				samConfig.Speed = (higherThanValue + lowerThanValue) / 2
+			}
+		}
+
+		// Pad remaining samples at end with "silence" to match target length
+		for i := 0; i < (targetLength - bufferLength); i++ {
+			audioState.Buffer = append(audioState.Buffer, 128)
+		}
+
+	} else {
+		if !generateBuffer(samState) {
+			return false
+		}
+	}
+
 	return true
 }
 
@@ -2093,6 +2146,14 @@ func main() {
 					}
 					i++
 				}
+			case "length":
+				if i+1 < len(os.Args) {
+					speed, err := strconv.ParseFloat(os.Args[i+1], 64)
+					if err == nil {
+						samConfig.Length = min(speed, 255)
+					}
+					i++
+				}
 			default:
 				printUsage()
 				os.Exit(1)
@@ -2129,8 +2190,6 @@ func main() {
 
 	var err error
 
-	trimAudioBuffer(&audioState.Buffer)
-
 	if wavFilename != "" {
 		err = writeWav(wavFilename, audioState.Buffer, int(float64(audioState.BufferPos)/SampleRateConversionDivisor))
 	} else {
@@ -2146,18 +2205,31 @@ func main() {
 	}
 }
 
-// Trim trailing zeroes from the end of the allocated audio buffer
+// Trim zeroes/silence from the end and the beginning of the audio buffer
 func trimAudioBuffer(buffer *[]byte) {
 
-	// Find the last non-zero value
+	// Find the last non-zero/non-silence value
 	newLength := len(*buffer)
 	for i := len(*buffer) - 1; i >= 0; i-- {
-		if (*buffer)[i] != 0 {
+		// if (*buffer)[i] != 0 {
+		if ((*buffer)[i] != 0) && ((*buffer)[i] != 128) {
 			newLength = i + 1
 			break
 		}
 	}
 	*buffer = (*buffer)[:newLength] // Shorten the existing slice
+
+	// Find the index of the first non-zero value
+	firstNonZeroIndex := 0
+	for i, value := range *buffer {
+		if value != 0 {
+			firstNonZeroIndex = i
+			break
+		}
+	}
+
+	// Remove leading zeros by re-slicing
+	*buffer = (*buffer)[firstNonZeroIndex:]
 }
 
 func frequencyToPitch(frequency float64) float64 {
@@ -2245,7 +2317,7 @@ func initThings(samState *SamState) {
 
 	audioState.BufferPos = 0
 	audioState.OldTimeTableIndex = 0
-	audioState.Buffer = make([]byte, SampleRate*10)
+	// audioState.Buffer = make([]byte, SampleRate*10)
 
 	audioState.LastSampleAmplitude = 128
 	audioState.LastSampleLocation = 0

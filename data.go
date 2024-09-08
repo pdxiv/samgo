@@ -5,6 +5,7 @@ import "github.com/ebitengine/oto/v3"
 type SamConfig struct {
 	Speed    float64
 	Pitch    float64
+	Length   float64
 	Mouth    byte
 	Throat   byte
 	SingMode bool
