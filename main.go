@@ -151,7 +151,7 @@ func textToPhonemes(samState *SamState, input []byte) bool {
 
 			// go to the right rules for this character.
 			samState.X = mem64EqualSignInRule - 'A'
-			mem62 = uint16(tab37489[samState.X]) | (uint16(tab37515[samState.X]) << 8)
+			mem62 = letterPositionInRuleTable[samState.X]
 		}
 
 		for {
@@ -1126,12 +1126,15 @@ func createTransitions(phonemeState *PhonemeState, speechFrame *SpeechFrame, sam
 
 func getRuleByte(mem62 uint16, y byte) byte {
 	address := int(mem62)
+	var output byte
 	if mem62 >= 37541 {
 		address -= 37541
-		return rules2[address+int(y)]
+		output = rules2[address+int(y)]
+	} else {
+		address -= 32000
+		output = rules[address+int(y)]
 	}
-	address -= 32000
-	return rules[address+int(y)]
+	return output
 }
 
 func read(speechFrame *SpeechFrame, p, currentFrame byte) float64 {
