@@ -44,7 +44,8 @@ func convertAudioFormat(input []byte) []byte {
 	return output
 }
 
-func playAudio(audioState *AudioState, buffer []byte, bufferLength int) error {
+func playAudio(audioState *AudioState, buffer []byte) error {
+	bufferLength := len(buffer)
 	if audioState.OtoCtx == nil {
 		return fmt.Errorf("audio context not initialized")
 	}
@@ -1975,7 +1976,8 @@ func write(speechFrame *SpeechFrame, p, currentFrame byte, value float64) {
 	}
 }
 
-func writeWav(filename string, buffer []byte, bufferLength int) error {
+func writeWav(filename string, buffer []byte) error {
+	bufferLength := len(buffer)
 	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
 
 	if err != nil {
@@ -2194,9 +2196,9 @@ func main() {
 	var err error
 
 	if wavFilename != "" {
-		err = writeWav(wavFilename, audioState.Buffer, int(float64(audioState.BufferPos)/SampleRateConversionDivisor))
+		err = writeWav(wavFilename, audioState.Buffer)
 	} else {
-		err = playAudio(audioState, audioState.Buffer, int(float64(audioState.BufferPos)/SampleRateConversionDivisor))
+		err = playAudio(audioState, audioState.Buffer)
 
 		if err != nil {
 			log.Fatalf("Failed to output audio: %v", err)
