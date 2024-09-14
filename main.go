@@ -2225,7 +2225,7 @@ func trimAudioBuffer(buffer *[]byte) {
 	// Find the index of the first non-zero value
 	firstNonZeroIndex := 0
 	for i, value := range *buffer {
-		if value != 0 {
+		if value != 0 && value != 128 {
 			firstNonZeroIndex = i
 			break
 		}
