@@ -6,8 +6,8 @@ type SamConfig struct {
 	Speed    float64
 	Pitch    float64
 	Length   float64
-	Mouth    byte
-	Throat   byte
+	Mouth    uint
+	Throat   uint
 	SingMode bool
 	Debug    bool
 	Robot    bool

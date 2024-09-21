@@ -1799,6 +1799,7 @@ func ruleDipthong(phonemeState *PhonemeState, samConfig *SamConfig, p byte, pf P
 // mouth formant (F1) and the throat formant (F2). Only the voiced
 // phonemes (5-29 and 48-53) are altered.
 func setMouthThroat(mouth, throat byte) {
+	fmt.Printf("DEBUG: mouth: %d\n", mouth)
 	mouthFormants5_29 := []byte{
 		0, 0, 0, 0, 0, 10, 14, 19, 24, 27, 23, 21, 16, 20, 14,
 		18, 14, 18, 18, 16, 13, 15, 11, 18, 14, 11, 9, 6, 6, 6,
@@ -1947,22 +1948,13 @@ func InitThings(samState *SamState) {
 	speechFrame.Amplitude3 = make([]float64, 256)
 	speechFrame.Pitches = make([]float64, 256)
 
-	samConfig.Speed = 72
-	samConfig.Pitch = 64
-	samConfig.Mouth = 128
-	samConfig.Throat = 128
-	samConfig.SingMode = false
-	samConfig.Debug = false
-	samConfig.Robot = false
-
 	audioState.BufferPos = 0
 	audioState.OldTimeTableIndex = 0
-	// audioState.Buffer = make([]byte, SampleRate*10)
 
 	audioState.LastSampleAmplitude = 128
 	audioState.LastSampleLocation = 0
 
-	setMouthThroat(samConfig.Mouth, samConfig.Throat)
+	setMouthThroat(byte(samConfig.Mouth), byte(samConfig.Throat))
 
 	// TODO: check for free memory, 10 seconds of output should be more than enough
 

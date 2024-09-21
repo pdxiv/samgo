@@ -23,7 +23,6 @@ func main() {
 	audioState := &samState.Audio
 	inputState := &samState.Input
 	samConfig := &samState.Config
-	synthesizer.InitThings(&samState)
 
 	var phonetic bool
 	var wavFilename string
@@ -34,6 +33,14 @@ func main() {
 		printUsage()
 		os.Exit(1)
 	}
+
+	samConfig.Speed = 72
+	samConfig.Pitch = 64
+	samConfig.Mouth = 128
+	samConfig.Throat = 128
+	samConfig.SingMode = false
+	samConfig.Debug = false
+	samConfig.Robot = false
 
 	i := 1
 	for i < len(os.Args) {
@@ -103,7 +110,7 @@ func main() {
 				if i+1 < len(os.Args) {
 					mouth, err := strconv.Atoi(os.Args[i+1])
 					if err == nil {
-						samConfig.Mouth = byte(min(mouth, 255))
+						samConfig.Mouth = uint(min(mouth, 255))
 					}
 					i++
 				}
@@ -111,7 +118,7 @@ func main() {
 				if i+1 < len(os.Args) {
 					throat, err := strconv.Atoi(os.Args[i+1])
 					if err == nil {
-						samConfig.Throat = byte(min(throat, 255))
+						samConfig.Throat = uint(byte(min(throat, 255)))
 					}
 					i++
 				}
@@ -150,6 +157,8 @@ func main() {
 	} else {
 		stringConcatenateSafe(inputState.Input, 256, "\x9b")
 	}
+
+	synthesizer.InitThings(&samState)
 
 	if !synthesizer.SamMain(&samState) {
 		printUsage()
