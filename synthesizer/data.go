@@ -1,4 +1,4 @@
-package main
+package synthesizer
 
 import "github.com/ebitengine/oto/v3"
 
