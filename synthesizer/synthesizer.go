@@ -1799,7 +1799,6 @@ func ruleDipthong(phonemeState *PhonemeState, samConfig *SamConfig, p byte, pf P
 // mouth formant (F1) and the throat formant (F2). Only the voiced
 // phonemes (5-29 and 48-53) are altered.
 func setMouthThroat(mouth, throat byte) {
-	fmt.Printf("DEBUG: mouth: %d\n", mouth)
 	mouthFormants5_29 := []byte{
 		0, 0, 0, 0, 0, 10, 14, 19, 24, 27, 23, 21, 16, 20, 14,
 		18, 14, 18, 18, 16, 13, 15, 11, 18, 14, 11, 9, 6, 6, 6,
