@@ -2439,42 +2439,6 @@ func handleCh(samState *SamState, ch, mem byte) int {
 	return 0
 }
 
-func nybbleTwosComplementToSigned(value uint8) int8 {
-	if value > 0xF {
-		panic("Value must be a 4-bit unsigned integer (0x0 to 0xF).")
-	}
-
-	// Convert the value to a 4-bit binary string
-	binaryStr := fmt.Sprintf("%04b", value)
-
-	// Check the sign bit (most significant bit)
-	if binaryStr[0] == '0' {
-		// Positive number or zero, return the value as is
-		decimalValue, _ := strconv.ParseInt(binaryStr, 2, 8)
-		return int8(decimalValue)
-	} else {
-		// Negative number, convert from two's complement
-		// Invert the bits
-		invertedBits := ""
-		for _, bit := range binaryStr {
-			if bit == '0' {
-				invertedBits += "1"
-			} else {
-				invertedBits += "0"
-			}
-		}
-
-		// Convert inverted bits to an integer
-		invertedValue, _ := strconv.ParseInt(invertedBits, 2, 8)
-
-		// Add 1 to the inverted value
-		magnitude := invertedValue + 1
-
-		// Return the negative value
-		return int8(-magnitude)
-	}
-}
-
 // "Enhanced quality" emulation of sine table
 // Default original value for "period" is 256, "amplitude" is 7
 func sineFloat(period int, amplitude int, phase int) float64 {
