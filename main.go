@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ebitengine/oto/v3"
 	"github.com/pdxiv/samgo/synthesizer"
 )
 
@@ -27,32 +28,18 @@ type sequencerEvent struct {
 }
 
 func main() {
-	var samState synthesizer.SamState
+	samState := synthesizer.SamState{}
 	audioState := &samState.Audio
 	inputState := &samState.Input
 	samConfig := &samState.Config
 
-	var phonetic bool
-	var sequencer bool
-	var wavFilename string
-
 	inputState.Input = make([]byte, 256)
 
 	// Define flags
-	flag.BoolVar(&samConfig.Debug, "debug", false, "print additional debug messages")
-	flag.Float64Var(&samConfig.Frequency, "frequency", 0, "set frequency value")
-	flag.BoolVar(&samConfig.Hifi, "hifi", false, "enable hifi")
-	flag.Float64Var(&samConfig.Length, "length", 0, "set length")
-	flag.UintVar(&samConfig.Mouth, "mouth", 128, "set mouth value")
-	flag.StringVar(&samConfig.Note, "note", "", "set note")
-	flag.BoolVar(&phonetic, "phonetic", false, "enter phonetic mode")
-	flag.Float64Var(&samConfig.Pitch, "pitch", 64, "set pitch value")
-	flag.BoolVar(&samConfig.Robot, "robot", false, "enable robot")
-	flag.BoolVar(&samConfig.SingMode, "sing", false, "enable sing mode")
-	flag.Float64Var(&samConfig.Speed, "speed", 72, "set speed value")
-	flag.UintVar(&samConfig.Throat, "throat", 128, "set throat value")
-	flag.StringVar(&wavFilename, "wav", "", "output to wav instead of libsdl")
-	flag.BoolVar(&sequencer, "sequencer", false, "enter sequencer mode")
+	phonetic := flag.Bool("phonetic", false, "enter phonetic mode")
+	sequencer := flag.Bool("sequencer", false, "enter sequencer mode")
+	wavFilename := flag.String("wav", "", "output to wav instead of libsdl")
+	defineFlags(samConfig)
 
 	// Parse flags
 	flag.Parse()
@@ -64,12 +51,114 @@ func main() {
 	}
 
 	// Concatenate positional arguments into inputState.Input
-	for _, arg := range flag.Args() {
-		stringConcatenateSafe(inputState.Input, 256, strings.ToUpper(arg+" "))
-		fmt.Printf("DEBUG: inputState.Input: \"%s\"\n", inputState.Input)
+	concatenateInput(inputState, flag.Args())
+
+	if samConfig.Debug {
+		printDebugInfo(*phonetic, inputState)
 	}
 
-	// Handle the -note flag to set Pitch
+	if err := initAudio(audioState); err != nil {
+		log.Fatalf("Failed to initialize audio: %v", err)
+	}
+
+	// Process input based on mode
+	if *phonetic {
+		handleNoteFlag(samConfig)
+		processPhoneticallyMode(inputState)
+		synthesizer.InitThings(&samState)
+		if !synthesizer.SamMain(&samState) {
+			printUsage()
+			os.Exit(1)
+		}
+	} else if *sequencer { // Sequencer mode is mostly several phonetic modes
+		events := getSequencerEvents(nullTerminatedBytesToString(inputState.Input))
+
+		var temporaryBuffer [][]byte
+		for eventIndex, event := range events {
+
+			samConfig.Length = event.Duration
+			inputState.Input = stringToNullTerminatedBytes(event.Phonemes)
+
+			numberOfNotes := len(event.Notes)
+			for _, currentNote := range event.Notes {
+				samConfig.Note = currentNote
+				handleNoteFlag(samConfig)
+				processPhoneticallyMode(inputState)
+
+				synthesizer.InitThings(&samState)
+				if !synthesizer.SamMain(&samState) {
+					printUsage()
+					os.Exit(1)
+				}
+				if len(temporaryBuffer) < eventIndex+1 {
+					// If buffer for sequencer step is empty, fill it
+					temporaryBuffer = append(temporaryBuffer, rescaleSampleByteSlice(audioState.Buffer, numberOfNotes))
+				} else {
+					// If buffer for sequencer step is empty, mix it
+					for sampleIndex := range audioState.Buffer {
+						val1 := int(temporaryBuffer[eventIndex][sampleIndex]) - 128
+						val2 := int(rescaleSampleByte(audioState.Buffer[sampleIndex], numberOfNotes)) - 128
+						temporaryBuffer[eventIndex][sampleIndex] = byte(val1 + val2 + 128)
+					}
+
+				}
+			}
+		}
+		audioState.Buffer = []byte{}
+
+		for _, bufferData := range temporaryBuffer {
+			audioState.Buffer = append(audioState.Buffer, bufferData...)
+		}
+
+	} else {
+		handleNoteFlag(samConfig)
+		processTextToPhonemes(&samState)
+		synthesizer.InitThings(&samState)
+		if !synthesizer.SamMain(&samState) {
+			printUsage()
+			os.Exit(1)
+		}
+	}
+
+	// Output audio
+	if err := outputAudio(audioState, *wavFilename); err != nil {
+		log.Fatalf("Failed to output audio: %v", err)
+	}
+}
+
+func rescaleSampleByteSlice(input []byte, factor int) []byte {
+	var output []byte
+	for _, sample := range input {
+		output = append(output, rescaleSampleByte(sample, factor))
+	}
+	return output
+}
+
+func rescaleSampleByte(input byte, factor int) byte {
+	return byte((float64(input)-128)/float64(factor) + 128)
+}
+
+func defineFlags(samConfig *synthesizer.SamConfig) {
+	flag.BoolVar(&samConfig.Debug, "debug", false, "print additional debug messages")
+	flag.Float64Var(&samConfig.Frequency, "frequency", 0, "set frequency value")
+	flag.BoolVar(&samConfig.Hifi, "hifi", false, "enable hifi")
+	flag.Float64Var(&samConfig.Length, "length", 0, "set length")
+	flag.UintVar(&samConfig.Mouth, "mouth", 128, "set mouth value")
+	flag.StringVar(&samConfig.Note, "note", "", "set note")
+	flag.Float64Var(&samConfig.Pitch, "pitch", 64, "set pitch value")
+	flag.BoolVar(&samConfig.Robot, "robot", false, "enable robot")
+	flag.BoolVar(&samConfig.SingMode, "sing", false, "enable sing mode")
+	flag.Float64Var(&samConfig.Speed, "speed", 72, "set speed value")
+	flag.UintVar(&samConfig.Throat, "throat", 128, "set throat value")
+}
+
+func concatenateInput(inputState *synthesizer.InputState, args []string) {
+	for _, arg := range args {
+		stringConcatenateSafe(inputState.Input, 256, strings.ToUpper(arg+" "))
+	}
+}
+
+func handleNoteFlag(samConfig *synthesizer.SamConfig) {
 	if samConfig.Note != "" {
 		samConfig.Robot = true
 		pitchValue, err := synthesizer.NoteToPitch(samConfig.Note)
@@ -87,50 +176,35 @@ func main() {
 		frequencyValue := synthesizer.FrequencyToPitch(samConfig.Frequency)
 		samConfig.Pitch = min(frequencyValue, 255)
 	}
+}
 
-	if samConfig.Debug {
-		if phonetic {
-			fmt.Printf("phonetic input: %s\n", nullTerminatedBytesToString(inputState.Input))
-		} else {
-			fmt.Printf("text input: %s\n", nullTerminatedBytesToString(inputState.Input))
-		}
-	}
-
+func printDebugInfo(phonetic bool, inputState *synthesizer.InputState) {
 	if phonetic {
-		stringConcatenateSafe(inputState.Input, 256, "\x9b")
+		fmt.Printf("phonetic input: %s\n", nullTerminatedBytesToString(inputState.Input))
 	} else {
-		stringConcatenateSafe(inputState.Input, 256, "[")
-		if !synthesizer.TextToPhonemes(&samState, inputState.Input) {
-			os.Exit(1)
-		}
-		if samConfig.Debug {
-			fmt.Printf("phonetic input: %s\n", nullTerminatedBytesToString(inputState.Input))
-		}
-
+		fmt.Printf("text input: %s\n", nullTerminatedBytesToString(inputState.Input))
 	}
+}
 
-	synthesizer.InitThings(&samState)
+func processPhoneticallyMode(inputState *synthesizer.InputState) {
+	stringConcatenateSafe(inputState.Input, 256, "\x9b")
+}
 
-	if !synthesizer.SamMain(&samState) {
-		printUsage()
+func processTextToPhonemes(samState *synthesizer.SamState) {
+	stringConcatenateSafe(samState.Input.Input, 256, "[")
+	if !synthesizer.TextToPhonemes(samState, samState.Input.Input) {
 		os.Exit(1)
 	}
+	if samState.Config.Debug {
+		fmt.Printf("phonetic input: %s\n", nullTerminatedBytesToString(samState.Input.Input))
+	}
+}
 
-	var err error
-
+func outputAudio(audioState *synthesizer.AudioState, wavFilename string) error {
 	if wavFilename != "" {
-		err = writeWav(wavFilename, audioState.Buffer)
-	} else {
-		err = playAudio(audioState, audioState.Buffer)
-
-		if err != nil {
-			log.Fatalf("Failed to output audio: %v", err)
-		}
+		return writeWav(wavFilename, audioState.Buffer)
 	}
-
-	if err != nil {
-		log.Fatalf("Failed to open log file: %v", err)
-	}
+	return playAudio(audioState, audioState.Buffer)
 }
 
 func printUsage() {
@@ -213,6 +287,13 @@ func nullTerminatedBytesToString(b []byte) string {
 		}
 	}
 	return string(b)
+}
+
+func stringToNullTerminatedBytes(input string) []byte {
+	byteSlice := make([]byte, 256) // Create a slice of length 256
+	copy(byteSlice, input)         // Copy the string into the slice
+	// The slice will already have 0 values in unused positions, so no need to add a null explicitly
+	return byteSlice
 }
 
 func writeWav(filename string, buffer []byte) error {
@@ -384,4 +465,21 @@ func getSequencerEvents(input string) []sequencerEvent {
 		}
 	}
 	return events
+}
+
+func initAudio(audioState *synthesizer.AudioState) error {
+	audioState.SampleRate = synthesizer.SampleRate
+	audioState.NumChannels = synthesizer.SampleChannels
+
+	var err error
+
+	audioState.OtoCtx, _, err = oto.NewContext(&oto.NewContextOptions{
+		SampleRate:   audioState.SampleRate,
+		ChannelCount: audioState.NumChannels,
+		Format:       oto.FormatUnsignedInt8,
+	})
+	if err != nil {
+		return fmt.Errorf("oto.NewContext failed: %v", err)
+	}
+	return nil
 }

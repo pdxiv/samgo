@@ -2,31 +2,11 @@ package synthesizer
 
 import (
 	"fmt"
-	"log"
 	"math"
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/ebitengine/oto/v3"
 )
-
-func initAudio(audioState *AudioState) error {
-	audioState.SampleRate = SampleRate
-	audioState.NumChannels = SampleChannels
-
-	var err error
-
-	audioState.OtoCtx, _, err = oto.NewContext(&oto.NewContextOptions{
-		SampleRate:   audioState.SampleRate,
-		ChannelCount: audioState.NumChannels,
-		Format:       oto.FormatUnsignedInt8,
-	})
-	if err != nil {
-		return fmt.Errorf("oto.NewContext failed: %v", err)
-	}
-	return nil
-}
 
 func TextToPhonemes(samState *SamState, input []byte) bool {
 	inputState := &samState.Input
@@ -1957,9 +1937,9 @@ func InitThings(samState *SamState) {
 
 	// TODO: check for free memory, 10 seconds of output should be more than enough
 
-	if err := initAudio(audioState); err != nil {
-		log.Fatalf("Failed to initialize audio: %v", err)
-	}
+	// 	if err := initAudio(audioState); err != nil {
+	// 		log.Fatalf("Failed to initialize audio: %v", err)
+	// 	}
 
 	for i := 0; i < 256; i++ {
 		phonemeState.Stress[i] = 0
