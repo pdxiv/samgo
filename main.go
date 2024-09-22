@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"flag"
 	"fmt"
 	"log"
 	"math"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +20,12 @@ type IntOrFloat interface {
 	~int | ~float64
 }
 
+type sequencerEvent struct {
+	Duration float64
+	Notes    []string
+	Phonemes string
+}
+
 func main() {
 	var samState synthesizer.SamState
 	audioState := &samState.Audio
@@ -25,117 +33,59 @@ func main() {
 	samConfig := &samState.Config
 
 	var phonetic bool
+	var sequencer bool
 	var wavFilename string
 
 	inputState.Input = make([]byte, 256)
 
-	if len(os.Args) <= 1 {
+	// Define flags
+	flag.BoolVar(&samConfig.Debug, "debug", false, "print additional debug messages")
+	flag.Float64Var(&samConfig.Frequency, "frequency", 0, "set frequency value")
+	flag.BoolVar(&samConfig.Hifi, "hifi", false, "enable hifi")
+	flag.Float64Var(&samConfig.Length, "length", 0, "set length")
+	flag.UintVar(&samConfig.Mouth, "mouth", 128, "set mouth value")
+	flag.StringVar(&samConfig.Note, "note", "", "set note")
+	flag.BoolVar(&phonetic, "phonetic", false, "enter phonetic mode")
+	flag.Float64Var(&samConfig.Pitch, "pitch", 64, "set pitch value")
+	flag.BoolVar(&samConfig.Robot, "robot", false, "enable robot")
+	flag.BoolVar(&samConfig.SingMode, "sing", false, "enable sing mode")
+	flag.Float64Var(&samConfig.Speed, "speed", 72, "set speed value")
+	flag.UintVar(&samConfig.Throat, "throat", 128, "set throat value")
+	flag.StringVar(&wavFilename, "wav", "", "output to wav instead of libsdl")
+	flag.BoolVar(&sequencer, "sequencer", false, "enter sequencer mode")
+
+	// Parse flags
+	flag.Parse()
+
+	// Check if there are no positional arguments after flags
+	if flag.NArg() == 0 {
 		printUsage()
 		os.Exit(1)
 	}
 
-	samConfig.Speed = 72
-	samConfig.Pitch = 64
-	samConfig.Mouth = 128
-	samConfig.Throat = 128
-	samConfig.SingMode = false
-	samConfig.Debug = false
-	samConfig.Robot = false
+	// Concatenate positional arguments into inputState.Input
+	for _, arg := range flag.Args() {
+		stringConcatenateSafe(inputState.Input, 256, strings.ToUpper(arg+" "))
+		fmt.Printf("DEBUG: inputState.Input: \"%s\"\n", inputState.Input)
+	}
 
-	i := 1
-	for i < len(os.Args) {
-		if os.Args[i][0] != '-' {
-			stringConcatenateSafe(inputState.Input, 256, strings.ToUpper(os.Args[i]+" "))
-		} else {
-			switch os.Args[i][1:] {
-			case "wav":
-				if i+1 < len(os.Args) {
-					wavFilename = os.Args[i+1]
-					i++
-				}
-			case "sing":
-				samConfig.SingMode = true
-			case "phonetic":
-				phonetic = true
-			case "debug":
-				samConfig.Debug = true
-			case "robot":
-				samConfig.Robot = true
-			case "hifi":
-				samConfig.Hifi = true
-			case "pitch":
-				if i+1 < len(os.Args) {
-					pitch, err := strconv.ParseFloat(os.Args[i+1], 64)
-					if err == nil {
-						if !samConfig.Robot {
-							pitch = math.Round(pitch)
-						}
-						samConfig.Pitch = min(pitch, 255)
-					}
-					i++
-				}
-			case "frequency":
-				if i+1 < len(os.Args) {
-					frequency, err := strconv.ParseFloat(os.Args[i+1], 64)
-					if err == nil {
-						pitchValue := synthesizer.FrequencyToPitch(frequency)
-						if !samConfig.Robot {
-							pitchValue = math.Round(pitchValue)
-						}
-						samConfig.Pitch = min(pitchValue, 255)
-					}
-					i++
-				}
-			case "note":
-				if i+1 < len(os.Args) {
-					note := os.Args[i+1]
-					pitchValue, err := synthesizer.NoteToPitch(note)
-					if err == nil {
-						if !samConfig.Robot {
-							pitchValue = math.Round(pitchValue)
-						}
-						samConfig.Pitch = min(pitchValue, 255)
-					}
-					i++
-				}
-			case "speed":
-				if i+1 < len(os.Args) {
-					speed, err := strconv.ParseFloat(os.Args[i+1], 64)
-					if err == nil {
-						samConfig.Speed = min(speed, 255)
-					}
-					i++
-				}
-			case "mouth":
-				if i+1 < len(os.Args) {
-					mouth, err := strconv.Atoi(os.Args[i+1])
-					if err == nil {
-						samConfig.Mouth = uint(min(mouth, 255))
-					}
-					i++
-				}
-			case "throat":
-				if i+1 < len(os.Args) {
-					throat, err := strconv.Atoi(os.Args[i+1])
-					if err == nil {
-						samConfig.Throat = uint(byte(min(throat, 255)))
-					}
-					i++
-				}
-			case "length":
-				if i+1 < len(os.Args) {
-					speed, err := strconv.ParseFloat(os.Args[i+1], 64)
-					if err == nil {
-						samConfig.Length = min(speed, 255)
-					}
-					i++
-				}
-			default:
-				printUsage()
-				os.Exit(1)
-			}
+	// Handle the -note flag to set Pitch
+	if samConfig.Note != "" {
+		samConfig.Robot = true
+		pitchValue, err := synthesizer.NoteToPitch(samConfig.Note)
+		if err != nil {
+			log.Fatalf("Invalid note '%s': %v", samConfig.Note, err)
 		}
-		i++
+		if !samConfig.Robot {
+			pitchValue = math.Round(pitchValue)
+		}
+		samConfig.Pitch = min(pitchValue, 255)
+	}
+
+	if samConfig.Frequency > 0 {
+		samConfig.Robot = true
+		frequencyValue := synthesizer.FrequencyToPitch(samConfig.Frequency)
+		samConfig.Pitch = min(frequencyValue, 255)
 	}
 
 	if samConfig.Debug {
@@ -146,7 +96,9 @@ func main() {
 		}
 	}
 
-	if !phonetic {
+	if phonetic {
+		stringConcatenateSafe(inputState.Input, 256, "\x9b")
+	} else {
 		stringConcatenateSafe(inputState.Input, 256, "[")
 		if !synthesizer.TextToPhonemes(&samState, inputState.Input) {
 			os.Exit(1)
@@ -154,8 +106,7 @@ func main() {
 		if samConfig.Debug {
 			fmt.Printf("phonetic input: %s\n", nullTerminatedBytesToString(inputState.Input))
 		}
-	} else {
-		stringConcatenateSafe(inputState.Input, 256, "\x9b")
+
 	}
 
 	synthesizer.InitThings(&samState)
@@ -185,14 +136,20 @@ func main() {
 func printUsage() {
 	fmt.Println("usage: sam [options] Word1 Word2 ....")
 	fmt.Println("options")
-	fmt.Println("  -phonetic       enters phonetic mode. (see below)")
-	fmt.Println("  -pitch number       set pitch value (default=64)")
-	fmt.Println("  -speed number       set speed value (default=72)")
-	fmt.Println("  -throat number      set throat value (default=128)")
-	fmt.Println("  -mouth number       set mouth value (default=128)")
-	fmt.Println("  -wav filename       output to wav instead of libsdl")
-	fmt.Println("  -sing           special treatment of pitch")
-	fmt.Println("  -debug          print additional debug messages")
+	fmt.Println("  -phonetic         Enters phonetic mode (see below)")
+	fmt.Println("  -pitch number     Set pitch value (default=64)")
+	fmt.Println("  -speed number     Set speed value (default=72)")
+	fmt.Println("  -throat number    Set throat value (default=128)")
+	fmt.Println("  -mouth number     Set mouth value (default=128)")
+	fmt.Println("  -wav filename     Output to wav instead of libsdl")
+	fmt.Println("  -sing             Special treatment of pitch")
+	fmt.Println("  -frequency number Set frequency value")
+	fmt.Println("  -hifi             Enable hifi mode")
+	fmt.Println("  -length number    Set length value")
+	fmt.Println("  -note string      Set note (e.g., C4, D#5)")
+	fmt.Println("  -robot            Enable robot mode")
+	fmt.Println("  -sequence         Enters sequencer mode.")
+	fmt.Println("  -debug            Print additional debug messages")
 	fmt.Println("")
 	fmt.Println("     VOWELS                            VOICED CONSONANTS")
 	fmt.Println("IY           f(ee)t                    R        red")
@@ -364,4 +321,67 @@ func convertAudioFormat(input []byte) []byte {
 		output[i] = sample ^ 0x80 // Convert unsigned 8-bit to signed 8-bit
 	}
 	return output
+}
+
+func getSequencerEvents(input string) []sequencerEvent {
+	const secondsInMinute = 60
+
+	tempo := 120.0 // Set default tempo to 120 BPM
+	var notes []string
+	var events []sequencerEvent
+
+	upperCaseInput := strings.ToUpper(input)
+
+	allCommandsPattern := regexp.MustCompile(`(TEMPO\s*\d+(?:\.\d+)?|[A-G][#-]?\d+(?: *, *[A-G][#-]?\d+)*|\([0-9A-Z ./]+\) *\ *{ *\d+(?:\.\d+)? *\})`)
+
+	tempoPattern := regexp.MustCompile(`TEMPO\s*(\d+(?:\.\d+)?)`)
+	notesPattern := regexp.MustCompile(`([A-G][#-]?\d+(?: *, *[A-G][#-]?\d+)*)`)
+	notePattern := regexp.MustCompile(`([A-G][#-]?\d+)`)
+	phonemePattern := regexp.MustCompile(`\(([0-9A-Z ./]+)\) *\ *{ *(\d+(?:\.\d+)?) *\}`)
+
+	commandMatches := allCommandsPattern.FindAllString(upperCaseInput, -1)
+	for _, command := range commandMatches {
+		switch {
+		case tempoPattern.MatchString(command):
+			match := tempoPattern.FindStringSubmatch(command)
+			tempoString := match[1]
+
+			f, err := strconv.ParseFloat(tempoString, 64)
+			if err != nil {
+				fmt.Println("Error:", err)
+			} else {
+				tempo = f
+			}
+
+		case notesPattern.MatchString(command):
+			notesString := notesPattern.FindString(command)
+			individualNotes := notePattern.FindAllString(notesString, -1)
+			notes = []string{}
+			notes = append(notes, individualNotes...)
+
+		case phonemePattern.MatchString(command):
+			match := phonemePattern.FindStringSubmatch(command)
+			phonemes := match[1]
+			durationString := match[2]
+
+			var duration float64
+			f, err := strconv.ParseFloat(durationString, 64)
+			if err != nil {
+				fmt.Println("Error:", err)
+			} else {
+				duration = f
+			}
+
+			currentEvent := sequencerEvent{
+				Duration: secondsInMinute * duration / tempo,
+				Notes:    notes,
+				Phonemes: phonemes,
+			}
+			events = append(events, currentEvent)
+
+		default:
+			fmt.Printf("Error: Unknown command: %s\n", command)
+		}
+	}
+	return events
 }

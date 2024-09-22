@@ -3,15 +3,17 @@ package synthesizer
 import "github.com/ebitengine/oto/v3"
 
 type SamConfig struct {
-	Speed    float64
-	Pitch    float64
-	Length   float64
-	Mouth    uint
-	Throat   uint
-	SingMode bool
-	Debug    bool
-	Robot    bool
-	Hifi     bool
+	Note      string
+	Speed     float64
+	Pitch     float64
+	Length    float64
+	Frequency float64
+	Mouth     uint
+	Throat    uint
+	SingMode  bool
+	Debug     bool
+	Robot     bool
+	Hifi      bool
 }
 
 type AudioState struct {
