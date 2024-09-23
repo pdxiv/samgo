@@ -127,14 +127,6 @@ func main() {
 	}
 }
 
-func rescaleSampleByteSlice(input []byte, factor int) []byte {
-	var output []byte
-	for _, sample := range input {
-		output = append(output, rescaleSampleByte(sample, factor))
-	}
-	return output
-}
-
 func rescaleSampleByte(input byte, factor int) byte {
 	return byte((float64(input)-128)/float64(factor) + 128)
 }
