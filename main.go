@@ -33,7 +33,7 @@ func main() {
 	inputState := &samState.Input
 	samConfig := &samState.Config
 
-	inputState.Input = make([]byte, 256)
+	inputState.Input = make([]byte, 65536)
 
 	// Define flags
 	phonetic := flag.Bool("phonetic", false, "enter phonetic mode")
@@ -80,7 +80,12 @@ func main() {
 			inputState.Input = stringToNullTerminatedBytes(event.Phonemes)
 
 			numberOfNotes := len(event.Notes)
+			samplesInStep := int(math.Round(synthesizer.SampleRate * event.Duration))
+			value := []byte{128}
+			temporaryBuffer = append(temporaryBuffer, bytes.Repeat(value, samplesInStep))
+
 			for _, currentNote := range event.Notes {
+
 				samConfig.Note = currentNote
 				handleNoteFlag(samConfig)
 				processPhoneticallyMode(inputState)
@@ -90,18 +95,14 @@ func main() {
 					printUsage()
 					os.Exit(1)
 				}
-				if len(temporaryBuffer) < eventIndex+1 {
-					// If buffer for sequencer step is empty, fill it
-					temporaryBuffer = append(temporaryBuffer, rescaleSampleByteSlice(audioState.Buffer, numberOfNotes))
-				} else {
-					// If buffer for sequencer step is empty, mix it
-					for sampleIndex := range audioState.Buffer {
-						val1 := int(temporaryBuffer[eventIndex][sampleIndex]) - 128
-						val2 := int(rescaleSampleByte(audioState.Buffer[sampleIndex], numberOfNotes)) - 128
-						temporaryBuffer[eventIndex][sampleIndex] = byte(val1 + val2 + 128)
-					}
 
+				// If buffer for sequencer step is empty, mix it
+				for sampleIndex := range audioState.Buffer {
+					val1 := int(temporaryBuffer[eventIndex][sampleIndex]) - 128
+					val2 := int(rescaleSampleByte(audioState.Buffer[sampleIndex], numberOfNotes)) - 128
+					temporaryBuffer[eventIndex][sampleIndex] = byte(val1 + val2 + 128)
 				}
+
 			}
 		}
 		audioState.Buffer = []byte{}
@@ -154,7 +155,7 @@ func defineFlags(samConfig *synthesizer.SamConfig) {
 
 func concatenateInput(inputState *synthesizer.InputState, args []string) {
 	for _, arg := range args {
-		stringConcatenateSafe(inputState.Input, 256, strings.ToUpper(arg+" "))
+		stringConcatenateSafe(inputState.Input, 65536, strings.ToUpper(arg+" "))
 	}
 }
 
@@ -412,13 +413,13 @@ func getSequencerEvents(input string) []sequencerEvent {
 	var events []sequencerEvent
 
 	upperCaseInput := strings.ToUpper(input)
+	allCommandsPattern := regexp.MustCompile(`(\bTEMPO\s*\d+(?:\.\d+)?\b|\b[A-G][#-]?\d+(?: *, *[A-G][#-]?\d+)*\b|\([A-Z/ ]+\)\s*\d+(?:\.\d+)?\b|\b_\s*\d+(?:\.\d+)?\b)`)
 
-	allCommandsPattern := regexp.MustCompile(`(TEMPO\s*\d+(?:\.\d+)?|[A-G][#-]?\d+(?: *, *[A-G][#-]?\d+)*|\([0-9A-Z ./]+\) *\ *{ *\d+(?:\.\d+)? *\})`)
-
-	tempoPattern := regexp.MustCompile(`TEMPO\s*(\d+(?:\.\d+)?)`)
-	notesPattern := regexp.MustCompile(`([A-G][#-]?\d+(?: *, *[A-G][#-]?\d+)*)`)
-	notePattern := regexp.MustCompile(`([A-G][#-]?\d+)`)
-	phonemePattern := regexp.MustCompile(`\(([0-9A-Z ./]+)\) *\ *{ *(\d+(?:\.\d+)?) *\}`)
+	tempoPattern := regexp.MustCompile(`\bTEMPO\s*(\d+(?:\.\d+)?)\b`)
+	notesPattern := regexp.MustCompile(`\b([A-G](?:#|-)?(?:\d+)(?: *, *[A-G](?:#|-)?(?:\d+))*)\b`)
+	notePattern := regexp.MustCompile(`\b([A-G])(#|-)?(\d+)\b`)
+	phonemePattern := regexp.MustCompile(`\(([A-Z/ ]+)\)\s*(\d+(?:\.\d+)?)\b`)
+	silencePattern := regexp.MustCompile(`\b_\s*(\d+(?:\.\d+)?)\b`)
 
 	commandMatches := allCommandsPattern.FindAllString(upperCaseInput, -1)
 	for _, command := range commandMatches {
@@ -460,6 +461,24 @@ func getSequencerEvents(input string) []sequencerEvent {
 			}
 			events = append(events, currentEvent)
 
+		case silencePattern.MatchString(command):
+			match := silencePattern.FindStringSubmatch(command)
+			durationString := match[1]
+
+			var duration float64
+			f, err := strconv.ParseFloat(durationString, 64)
+			if err != nil {
+				fmt.Println("Error:", err)
+			} else {
+				duration = f
+			}
+
+			currentEvent := sequencerEvent{
+				Duration: secondsInMinute * duration / tempo,
+				Notes:    make([]string, 0),
+				Phonemes: "",
+			}
+			events = append(events, currentEvent)
 		default:
 			fmt.Printf("Error: Unknown command: %s\n", command)
 		}

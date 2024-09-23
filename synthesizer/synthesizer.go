@@ -26,7 +26,7 @@ func TextToPhonemes(samState *SamState, input []byte) bool {
 	var r int
 	processRuleFlag := false
 
-	inputState.InputTemp = make([]byte, 256)
+	inputState.InputTemp = make([]byte, 65536)
 	inputState.InputTemp[0] = ' '
 
 	// secure copy of input because input will be overwritten by phonemes
