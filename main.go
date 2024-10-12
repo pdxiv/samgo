@@ -215,7 +215,7 @@ func printUsage() {
 	fmt.Println("  -length number    Set length value")
 	fmt.Println("  -note string      Set note (e.g., C4, D#5)")
 	fmt.Println("  -robot            Enable robot mode")
-	fmt.Println("  -sequence         Enters sequencer mode.")
+	fmt.Println("  -sequencer        Enters sequencer mode.")
 	fmt.Println("  -debug            Print additional debug messages")
 	fmt.Println("")
 	fmt.Println("     VOWELS                            VOICED CONSONANTS")
