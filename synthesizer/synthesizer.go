@@ -803,7 +803,7 @@ func generateBuffer(samState *SamState) bool {
 	audioState := &samState.Audio
 
 	audioState.BufferPos = 0
-	audioState.Buffer = make([]byte, SampleRate*10)
+	audioState.Buffer = make([]byte, SampleRate*1024)
 
 	if !parser1(phonemeState, inputState) {
 		return false
@@ -840,7 +840,7 @@ func SamMain(samState *SamState) bool {
 	// If there is a target length set, attempt to figure out what the closest speed setting is.
 	if samConfig.Length > 0 {
 		targetLength := int(math.Round(samConfig.Length * float64(audioState.SampleRate)))
-		lowerThanValue := 255.0
+		lowerThanValue := 65535.0
 		higherThanValue := 0.0
 
 		bufferLength := 0
