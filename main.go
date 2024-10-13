@@ -39,19 +39,32 @@ func main() {
 	phonetic := flag.Bool("phonetic", false, "enter phonetic mode")
 	sequencer := flag.Bool("sequencer", false, "enter sequencer mode")
 	wavFilename := flag.String("wav", "", "output to wav instead of libsdl")
+	inputFile := flag.String("input", "", "input file containing text input")
 	defineFlags(samConfig)
 
 	// Parse flags
 	flag.Parse()
 
-	// Check if there are no positional arguments after flags
-	if flag.NArg() == 0 {
-		printUsage()
-		os.Exit(1)
-	}
+	// Check if there's an input file specified
+	if *inputFile != "" {
+		// Read the contents of the input file
+		content, err := os.ReadFile(*inputFile)
+		if err != nil {
+			log.Fatalf("Error reading input file: %v", err)
+		}
 
-	// Concatenate positional arguments into inputState.Input
-	concatenateInput(inputState, flag.Args())
+		// Sanitize and use the file contents as input
+		sanitizedContent := sanitizeAsciiBytes(content)
+		copy(inputState.Input, sanitizedContent)
+	} else {
+		// Check if there are no positional arguments after flags
+		if flag.NArg() == 0 {
+			printUsage()
+			os.Exit(1)
+		}
+		// Concatenate positional arguments into inputState.Input
+		concatenateInput(inputState, flag.Args())
+	}
 
 	if samConfig.Debug {
 		printDebugInfo(*phonetic, inputState)
@@ -125,6 +138,20 @@ func main() {
 	if err := outputAudio(audioState, *wavFilename); err != nil {
 		log.Fatalf("Failed to output audio: %v", err)
 	}
+}
+
+func sanitizeAsciiBytes(input []byte) []byte {
+	// Sanitize a byte array with ascii characters and replace all values below
+	// 32 or above 126 with ascii code 32 (blank space)
+	var sanitized []byte
+	for _, b := range input {
+		if b >= 32 && b <= 126 {
+			sanitized = append(sanitized, b)
+		} else {
+			sanitized = append(sanitized, ' ')
+		}
+	}
+	return sanitized
 }
 
 func rescaleSampleByte(input byte, factor int) byte {
